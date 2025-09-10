@@ -1,0 +1,23 @@
+---
+globs: **/*.go,**/*.json
+---
+# Storage, Config, History, Profiles
+
+Derived from [ide.md](mdc:ide.md)
+
+- Config file location: `~/.hadescrypt/config.json`
+- Config content suggestions:
+  - Theme preference (dark/light)
+  - Window size/state
+  - Argon2id defaults (memory, iterations, parallelism)
+  - Last used options profile
+- History log:
+  - Append entries for every Encrypt/Decrypt attempt
+  - Fields: file/folder name, operation, size, timestamp, result, error (if any)
+  - Provide Clear History action
+- Profiles:
+  - Save named presets of options (e.g., Fast Archive, Ultra Secure, Cloud Upload)
+  - CRUD operations in UI; store in same JSON alongside history
+- Data hygiene:
+  - Do not store plaintext passwords or derived keys
+  - Only store non-sensitive option flags and UI state

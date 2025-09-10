@@ -1,0 +1,21 @@
+---
+alwaysApply: true
+---
+# HadesCrypt – Project Overview
+
+Derived from [ide.md](mdc:ide.md)
+
+- Vision: Simple-first, powerful-when-needed file/folder encryption app in Go.
+- Targets:
+  - Beginner: drag & drop + password → instant Encrypt/Decrypt
+  - Expert: advanced options (paranoid mode, keyfiles, Reed–Solomon, etc.)
+- Architecture:
+  - Core Engine: AES-256-GCM, XChaCha20, Cascade; modular packages; CLI support
+  - GUI: Fyne; main window (drag-drop + password + actions), advanced panel, history/profiles
+  - Storage: JSON config at `~/.hadescrypt/config.json`
+- MVP Focus: AES-GCM core, basic GUI, progress bar
+
+Key conventions:
+- Product name: HadesCrypt 🔱
+- Default theme: Dark (neon purple + electric blue); optional light mode
+- Tagline: "Lock your secrets, rule your data."

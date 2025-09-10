@@ -1,0 +1,34 @@
+# Go build output
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# Go workspace file
+*.mod
+*.sum
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Archive files
+*.zip
+*.tar.gz
+*.rar
+
+# Key and config files (if sensitive)
+internal/keyfiles/*.key
+internal/config/*.env
