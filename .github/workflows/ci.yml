@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.25.x'
 
 jobs:
   test:
@@ -37,8 +37,9 @@ jobs:
     - name: Run linter
       uses: golangci/golangci-lint-action@v3
       with:
-        version: latest
-        args: --timeout=5m
+  version: latest
+  install-mode: goinstall
+  args: --timeout=5m --out-format=colored-line-number
 
   build-check:
     name: Build Check (Windows)
@@ -48,7 +49,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Set up Go
+  - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: ${{ env.GO_VERSION }}
