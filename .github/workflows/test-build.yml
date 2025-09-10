@@ -1,0 +1,81 @@
+name: Test Build
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - "VERSION"
+
+jobs:
+  test-build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        check-latest: true
+        cache: true
+
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
+
+    - name: Install dependencies
+      run: go mod tidy
+
+    - name: Run tests
+      run: go test ./... -v
+
+    - name: Build for Linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        mkdir -p dist/linux
+        go build -ldflags "-s -w" -o dist/linux/HadesCrypt .
+      env:
+        CGO_ENABLED: 1
+
+    - name: Build for Windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        mkdir -p dist/windows
+        go build -ldflags "-s -w" -o dist/windows/HadesCrypt.exe .
+      env:
+        CGO_ENABLED: 1
+
+    - name: Build for macOS
+      if: matrix.os == 'macos-latest'
+      run: |
+        mkdir -p dist/macos
+        go build -ldflags "-s -w" -o dist/macos/HadesCrypt .
+      env:
+        CGO_ENABLED: 1
+
+    - name: Test executable (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        file dist/linux/HadesCrypt
+        ls -la dist/linux/HadesCrypt
+
+    - name: Test executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        dir dist\windows\HadesCrypt.exe
+        Get-FileHash dist\windows\HadesCrypt.exe -Algorithm SHA256
+
+    - name: Test executable (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        file dist/macos/HadesCrypt
+        ls -la dist/macos/HadesCrypt

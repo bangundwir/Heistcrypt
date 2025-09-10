@@ -1,6 +1,6 @@
 1 VERSIONINFO
-FILEVERSION 1,49,0,0
-PRODUCTVERSION 1,49,0,0
+FILEVERSION 2,0,0,0
+PRODUCTVERSION 2,0,0,0
 FILEOS 0x40004
 FILETYPE 0x1
 {
@@ -8,9 +8,15 @@ BLOCK "StringFileInfo"
 {
 	BLOCK "040904B0"
 	{
-		VALUE "FileVersion", "1.49"
-		VALUE "LegalCopyright", "\xA9 bangundwir & contributors, GPLv3"
-		VALUE "ProductName", "HeistCrypt"
+		VALUE "CompanyName", "HadesCrypt Development Team"
+		VALUE "FileDescription", "HadesCrypt - Advanced File Encryption Tool"
+		VALUE "FileVersion", "2.0.0"
+		VALUE "InternalName", "HadesCrypt"
+		VALUE "LegalCopyright", "\xA9 2024 HadesCrypt Contributors, MIT License"
+		VALUE "OriginalFilename", "HadesCrypt.exe"
+		VALUE "ProductName", "HadesCrypt"
+		VALUE "ProductVersion", "2.0.0"
+		VALUE "Comments", "Lock your secrets, rule your data. 🔱"
 	}
 }
 

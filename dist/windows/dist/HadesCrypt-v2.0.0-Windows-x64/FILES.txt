@@ -1,0 +1,22 @@
+HadesCrypt v2.0.0 Distribution Contents:
+
+HadesCrypt.exe          - Main application executable
+install.bat             - Optional system installer
+QUICK_START.txt         - Quick start guide
+docs\                   - Documentation folder
+  README.md             - Main documentation
+  CHANGELOG.md          - Version history
+  COMMENT_DETECTION.md  - Comment feature documentation
+  BUILD_INSTRUCTIONS.md - Build instructions
+  LICENSE               - License information
+
+File Verification:
+. : File C:\Users\hendr\Documents\WindowsPowerShell\profile.ps1 cannot be loaded because running scripts 
+is disabled on this system. For more information, see about_Execution_Policies at 
+https:/go.microsoft.com/fwlink/?LinkID=135170.
+At line:1 char:3
++ . 'C:\Users\hendr\Documents\WindowsPowerShell\profile.ps1'
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : SecurityError: (:) [], PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+HadesCrypt.exe SHA256: 06DA465DDB980C3E33194E4B55E53CDF24352E84169AC1BFB4F2EAD6F5D5ECBB

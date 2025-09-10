@@ -1,0 +1,27 @@
+# HadesCrypt v2.0.0 - Quick Start Guide
+
+## Installation
+1. Extract all files to a folder
+2. Run install.bat as Administrator (optional)
+3. Or simply run HadesCrypt.exe directly
+
+## Basic Usage
+1. Launch HadesCrypt.exe
+2. Drag and drop your file into the application
+3. Enter a strong password
+4. Click "Encrypt" to encrypt or "Decrypt" to decrypt
+
+## Features
+- Multiple encryption modes (AES-256, ChaCha20, Post-Quantum, GnuPG)
+- Password strength meter and generator
+- Comments and keyfiles support
+- Drag and drop interface
+- Progress tracking
+
+## Support
+For help and documentation, see the docs folder.
+
+## Version: 2.0.0
+Build Date: Wed 09/10/2025
+
+Lock your secrets, rule your data. 🔱

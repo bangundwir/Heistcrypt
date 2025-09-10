@@ -1,16 +1,16 @@
 package cryptoengine
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/binary"
-	"errors"
-	"fmt"
-	"io"
-	"os"
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/rand"
+    "encoding/binary"
+    "errors"
+    "fmt"
+    "io"
+    "os"
 
-	"golang.org/x/crypto/argon2"
+    "golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 	
 	"github.com/bangundwir/HadesCrypt/internal/postquantum"
@@ -129,13 +129,13 @@ func EncryptFileWithMode(inputPath, outputPath string, password []byte, mode Enc
         }
     case ModeParanoid:
         // First layer: AES-256-GCM
-        block, err := aes.NewCipher(key)
-        if err != nil {
-            return err
-        }
+    block, err := aes.NewCipher(key)
+    if err != nil {
+        return err
+    }
         aead, err = cipher.NewGCM(block)
-        if err != nil {
-            return err
+    if err != nil {
+        return err
         }
         
         // Second layer: ChaCha20-Poly1305 (derive different key)
@@ -379,13 +379,13 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
         }
     case ModeParanoid:
         // First layer: AES-256-GCM
-        block, err := aes.NewCipher(key)
-        if err != nil {
-            return err
-        }
+    block, err := aes.NewCipher(key)
+    if err != nil {
+        return err
+    }
         aead, err = cipher.NewGCM(block)
-        if err != nil {
-            return err
+    if err != nil {
+        return err
         }
         
         // Second layer: ChaCha20-Poly1305
@@ -488,8 +488,8 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
                 }
             } else {
                 plain, err = aead.Open(nil, nonce, cipherChunk, nil)
-                if err != nil {
-                    return err
+            if err != nil {
+                return err
                 }
             }
             if _, err := out.Write(plain); err != nil {
@@ -541,8 +541,8 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
             }
         } else {
             plain, err = aead.Open(nil, nonce, cipherChunk, nil)
-            if err != nil {
-                return err
+        if err != nil {
+            return err
             }
         }
         if _, err := out.Write(plain); err != nil {

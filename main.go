@@ -337,14 +337,14 @@ func (s *AppState) setupUI(w fyne.Window) {
 }
 
 func (s *AppState) showFileDialog(w fyne.Window) {
-	fd := dialog.NewFileOpen(func(rc fyne.URIReadCloser, err error) {
-		if err != nil {
-			dialog.ShowError(err, w)
-        return
-    }
-		if rc == nil {
-			return
-		}
+        fd := dialog.NewFileOpen(func(rc fyne.URIReadCloser, err error) {
+            if err != nil {
+                dialog.ShowError(err, w)
+                return
+            }
+            if rc == nil {
+                return
+            }
 		defer rc.Close()
 		
 		path := rc.URI().Path()
@@ -352,8 +352,8 @@ func (s *AppState) showFileDialog(w fyne.Window) {
 	}, w)
 	
 	// Allow both files and folders
-	fd.SetFilter(nil)
-	fd.Show()
+        fd.SetFilter(nil)
+        fd.Show()
 }
 
 func (s *AppState) setSelectedFile(path string) {
@@ -501,10 +501,10 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 	
 	// Check if input is a directory
 	info, err := os.Stat(s.selectedPath)
-	if err != nil {
-		dialog.ShowError(err, w)
-		return
-	}
+        if err != nil {
+            dialog.ShowError(err, w)
+            return
+        }
 
 	if info.IsDir() && !s.recursiveMode {
 		dialog.ShowInformation("Folder encryption", "Please enable 'Recursive Mode' in Advanced Options to encrypt folders.", w)
@@ -765,10 +765,10 @@ func (s *AppState) defaultOutputPathForDecrypt(inPath string) string {
 		return strings.TrimSuffix(inPath, ".hades")
 	}
 	if strings.HasSuffix(lowerPath, ".hadescrypt") {
-		return strings.TrimSuffix(inPath, filepath.Ext(inPath))
-	}
+        return strings.TrimSuffix(inPath, filepath.Ext(inPath))
+    }
 	
-	return inPath + ".dec"
+    return inPath + ".dec"
 }
 
 // isGnuPGFile checks if the file is a GnuPG/OpenPGP file
@@ -830,14 +830,14 @@ func (s *AppState) showKeyfileDialog(w fyne.Window) {
 		// Validate keyfile
 		if err := keyfiles.ValidateKeyfile(path); err != nil {
 			dialog.ShowError(fmt.Errorf("Invalid keyfile: %v", err), w)
-			return
-		}
+        return
+    }
 		
 		// Add keyfile
 		if err := s.keyfileManager.AddKeyfile(path); err != nil {
 			dialog.ShowError(fmt.Errorf("Failed to add keyfile: %v", err), w)
-			return
-		}
+        return
+    }
 		
 		s.updateKeyfilesDisplay()
 	}, w)
@@ -874,20 +874,20 @@ func (s *AppState) showGenerateKeyfileDialog(w fyne.Window) {
 		size, err := strconv.Atoi(sizeStr)
 		if err != nil || size <= 0 {
 			dialog.ShowError(fmt.Errorf("Invalid size: %s", sizeStr), w)
-			return
-		}
+                return
+            }
 		
 		// Convert to KB
 		if unitSelect.Selected == "MB" {
 			size *= 1024
-		}
+        }
 		
 		// Show save dialog
 		fd := dialog.NewFileSave(func(uc fyne.URIWriteCloser, err error) {
-			if err != nil {
-				dialog.ShowError(err, w)
-				return
-			}
+        if err != nil {
+            dialog.ShowError(err, w)
+            return
+        }
 			if uc == nil {
 				return
 			}
@@ -898,14 +898,14 @@ func (s *AppState) showGenerateKeyfileDialog(w fyne.Window) {
 			// Generate keyfile
 			if err := keyfiles.GenerateKeyfile(outputPath, size); err != nil {
 				dialog.ShowError(fmt.Errorf("Failed to generate keyfile: %v", err), w)
-				return
-			}
+        return
+    }
 			
 			// Add to manager
 			if err := s.keyfileManager.AddKeyfile(outputPath); err != nil {
 				dialog.ShowError(fmt.Errorf("Failed to add generated keyfile: %v", err), w)
-				return
-			}
+        return
+    }
 			
 			s.updateKeyfilesDisplay()
 			dialog.ShowInformation("Success", fmt.Sprintf("Keyfile generated and added: %s", filepath.Base(outputPath)), w)
@@ -952,10 +952,10 @@ func (s *AppState) showPasswordGeneratorDialog(w fyne.Window) {
 		}
 		
 		password, err := pw.GenerateWithOptions(opts)
-		if err != nil {
-			dialog.ShowError(err, w)
-			return
-		}
+        if err != nil {
+            dialog.ShowError(err, w)
+            return
+        }
 		previewEntry.SetText(password)
 	}
 	
