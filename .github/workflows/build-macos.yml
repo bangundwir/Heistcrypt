@@ -29,56 +29,74 @@ jobs:
         brew install glfw glew
 
     - name: Install dependencies
-      run: |
-        cd src
-        go mod download
+      run: go mod tidy
 
     - name: Build
       run: |
-        cd src
-        go build -v -ldflags="-s -w" -o Picocrypt Picocrypt.go
+        mkdir -p dist/macos
+        go build -v -ldflags="-s -w" -o dist/macos/HadesCrypt .
       env:
         CGO_ENABLED: 1
 
-    - name: Package as .app in a .dmg
+    - name: Get version
       run: |
-        mv dist/macos/Picocrypt.app.zip .
-        unzip -d Picocrypt.app Picocrypt.app.zip
-        rm Picocrypt.app.zip
-        mv src/Picocrypt Picocrypt.app/Contents/MacOS/Picocrypt
-        rm Picocrypt.app/Contents/Resources/icon.icns
-        mv dist/macos/iconSmall.icns Picocrypt.app/Contents/Resources/icon.icns
-        mkdir out
-        cp -R Picocrypt.app out
-        hdiutil create Picocrypt.dmg -volname Picocrypt -fs APFS -format UDZO -srcfolder out
+        VERSION=$(cat VERSION | tr -d '\n\r')
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Create macOS package
+      run: |
+        PACKAGE_NAME="HadesCrypt-v$VERSION-macOS-x64"
+        mkdir -p "$PACKAGE_NAME/docs"
+        
+        # Copy executable
+        cp dist/macos/HadesCrypt "$PACKAGE_NAME/"
+        chmod +x "$PACKAGE_NAME/HadesCrypt"
+        
+        # Copy documentation
+        cp README.md "$PACKAGE_NAME/docs/" 2>/dev/null || true
+        cp CHANGELOG.md "$PACKAGE_NAME/docs/" 2>/dev/null || true
+        
+        # Create install script
+        cat > "$PACKAGE_NAME/install.sh" << 'EOF'
+#!/bin/bash
+echo "Installing HadesCrypt..."
+sudo cp HadesCrypt /usr/local/bin/hadescrypt
+sudo chmod +x /usr/local/bin/hadescrypt
+echo "HadesCrypt installed successfully!"
+EOF
+        chmod +x "$PACKAGE_NAME/install.sh"
+        
+        # Create tar.gz
+        tar -czf "$PACKAGE_NAME.tar.gz" "$PACKAGE_NAME"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: build-macos
         path: |
-          Picocrypt.dmg
+          dist/macos/HadesCrypt
+          HadesCrypt-v${{ env.VERSION }}-macOS-x64.tar.gz
         if-no-files-found: error
         compression-level: 9
 
-    - name: Get version tag
-      run: |
-        VERSION=$(cat VERSION)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-
     - name: Generate checksums
       run: |
-        HASH=$(shasum -a 256 Picocrypt.dmg | cut -d ' ' -f1)
-        echo "CHECKSUM_PICOCRYPT=$HASH" >> $GITHUB_ENV
+        HASH1=$(shasum -a 256 dist/macos/HadesCrypt | cut -d ' ' -f1)
+        HASH2=$(shasum -a 256 HadesCrypt-v$VERSION-macOS-x64.tar.gz | cut -d ' ' -f1)
+        echo "CHECKSUM_HADESCRYPT=$HASH1" >> $GITHUB_ENV
+        echo "CHECKSUM_PACKAGE=$HASH2" >> $GITHUB_ENV
 
     - name: Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          Picocrypt.dmg
-        tag_name: ${{ env.VERSION }}
+          dist/macos/HadesCrypt
+          HadesCrypt-v${{ env.VERSION }}-macOS-x64.tar.gz
+        tag_name: v${{ env.VERSION }}
+        name: HadesCrypt v${{ env.VERSION }}
         make_latest: true
         append_body: true
         body: |
-          **macOS:**
-          `sha256(Picocrypt.dmg)  ${{ env.CHECKSUM_PICOCRYPT }}`
+          **macOS Build:**
+          `sha256(HadesCrypt)      ${{ env.CHECKSUM_HADESCRYPT }}`
+          `sha256(Package.tar.gz) ${{ env.CHECKSUM_PACKAGE }}`

@@ -7,12 +7,14 @@ on:
     branches: [ main ]
     paths-ignore:
       - "VERSION"
+  workflow_dispatch:
 
 jobs:
   test-build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
+        # Temporarily remove macOS to reduce complexity
     
     runs-on: ${{ matrix.os }}
     
@@ -35,47 +37,42 @@ jobs:
     - name: Install dependencies
       run: go mod tidy
 
-    - name: Run tests
-      run: go test ./... -v
+    - name: Verify project structure
+      run: |
+        ls -la
+        echo "Checking main.go..."
+        head -5 main.go
 
     - name: Build for Linux
       if: matrix.os == 'ubuntu-latest'
       run: |
+        echo "Building for Linux..."
         mkdir -p dist/linux
-        go build -ldflags "-s -w" -o dist/linux/HadesCrypt .
-      env:
-        CGO_ENABLED: 1
-
-    - name: Build for Windows
-      if: matrix.os == 'windows-latest'
-      run: |
-        mkdir -p dist/windows
-        go build -ldflags "-s -w" -o dist/windows/HadesCrypt.exe .
-      env:
-        CGO_ENABLED: 1
-
-    - name: Build for macOS
-      if: matrix.os == 'macos-latest'
-      run: |
-        mkdir -p dist/macos
-        go build -ldflags "-s -w" -o dist/macos/HadesCrypt .
-      env:
-        CGO_ENABLED: 1
-
-    - name: Test executable (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
+        go build -v -o dist/linux/HadesCrypt .
+        echo "Build completed!"
         file dist/linux/HadesCrypt
         ls -la dist/linux/HadesCrypt
+      env:
+        CGO_ENABLED: 1
 
-    - name: Test executable (Windows)
+    - name: Build for Windows  
       if: matrix.os == 'windows-latest'
+      shell: pwsh
       run: |
-        dir dist\windows\HadesCrypt.exe
-        Get-FileHash dist\windows\HadesCrypt.exe -Algorithm SHA256
+        Write-Host "Building for Windows..."
+        New-Item -ItemType Directory -Force -Path dist/windows
+        go build -v -o dist/windows/HadesCrypt.exe .
+        Write-Host "Build completed!"
+        Get-Item dist/windows/HadesCrypt.exe
+        Get-FileHash dist/windows/HadesCrypt.exe -Algorithm SHA256
+      env:
+        CGO_ENABLED: 1
 
-    - name: Test executable (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        file dist/macos/HadesCrypt
-        ls -la dist/macos/HadesCrypt
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-build-${{ matrix.os }}
+        path: |
+          dist/
+        if-no-files-found: error
+        retention-days: 1

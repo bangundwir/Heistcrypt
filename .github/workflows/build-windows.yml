@@ -47,33 +47,28 @@ jobs:
         $packageName = "HadesCrypt-v${{ env.VERSION }}-Windows-x64"
         $packageDir = "dist/$packageName"
         
-        # Create package directory
         New-Item -ItemType Directory -Force -Path $packageDir
         New-Item -ItemType Directory -Force -Path "$packageDir/docs"
         
-        # Copy files
         Copy-Item "dist/windows/HadesCrypt.exe" "$packageDir/HadesCrypt.exe"
         Copy-Item "README.md" "$packageDir/docs/README.md" -ErrorAction SilentlyContinue
         Copy-Item "CHANGELOG.md" "$packageDir/docs/CHANGELOG.md" -ErrorAction SilentlyContinue
         Copy-Item "dist/windows/install.bat" "$packageDir/install.bat"
         
-        # Create quick start guide
-        @"
-# HadesCrypt v$env:VERSION - Quick Start Guide
-
-## Installation
-1. Extract all files to a folder
-2. Run install.bat as Administrator (optional)
-3. Or simply run HadesCrypt.exe directly
-
-## Basic Usage  
-1. Launch HadesCrypt.exe
-2. Drag and drop your file into the application
-3. Enter a strong password
-4. Click "Encrypt" to encrypt or "Decrypt" to decrypt
-
-Lock your secrets, rule your data. 🔱
-"@ | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8
+        "# HadesCrypt v$env:VERSION - Quick Start Guide" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8
+        "" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "## Installation" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "1. Extract all files to a folder" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "2. Run install.bat as Administrator (optional)" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "3. Or simply run HadesCrypt.exe directly" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "## Basic Usage" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "1. Launch HadesCrypt.exe" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "2. Drag and drop your file into the application" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "3. Enter a strong password" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "4. Click Encrypt to encrypt or Decrypt to decrypt" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "" | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
+        "Lock your secrets, rule your data." | Out-File -FilePath "$packageDir/QUICK_START.txt" -Encoding UTF8 -Append
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
