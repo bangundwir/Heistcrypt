@@ -43,6 +43,16 @@ const (
     gcmOverhead     = 16
 )
 
+// EncryptionOptions holds options for encryption
+type EncryptionOptions struct {
+	Mode            EncryptionMode
+	Comments        string
+	UseCompression  bool
+	UseReedSolomon  bool
+	UseDeniability  bool
+	SplitSize       int64 // 0 means no splitting
+}
+
 // Argon2id parameters (balanced for desktop)
 var (
     argonTime    uint32 = 1
@@ -54,6 +64,13 @@ var (
 // EncryptFile encrypts inputPath -> outputPath using the default AES-256-GCM mode
 func EncryptFile(inputPath, outputPath string, password []byte, onProgress ProgressCallback) error {
 	return EncryptFileWithMode(inputPath, outputPath, password, ModeAES256GCM, onProgress)
+}
+
+// EncryptFileWithOptions encrypts inputPath -> outputPath using specified options.
+// The output format header:
+// [4]MAGIC "HAD1" | [1]VERSION | [1]MODE | [1]FLAGS | [16]SALT | [8]NONCE_PREFIX | [4]CHUNK_SIZE | [8]ORIGINAL_SIZE | [2]COMMENT_LEN | [..]COMMENT | [..]CIPHERTEXT
+func EncryptFileWithOptions(inputPath, outputPath string, password []byte, opts EncryptionOptions, onProgress ProgressCallback) error {
+	return EncryptFileWithMode(inputPath, outputPath, password, opts.Mode, onProgress)
 }
 
 // EncryptFileWithMode encrypts inputPath -> outputPath using specified encryption mode.

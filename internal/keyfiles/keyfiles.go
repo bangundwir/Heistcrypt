@@ -77,12 +77,37 @@ func (km *KeyfileManager) GetCombinedKey(password []byte) []byte {
 	// Add password first
 	hasher.Write(password)
 	
-	// Add keyfiles in order
-	for _, kf := range km.Keyfiles {
+	// Add keyfiles in order (order matters if RequireOrder is true)
+	for i, kf := range km.Keyfiles {
 		hasher.Write(kf.Hash[:])
+		
+		// If order is required, include position in hash
+		if km.RequireOrder {
+			hasher.Write([]byte{byte(i)})
+		}
 	}
 	
 	return hasher.Sum(nil)
+}
+
+// MoveKeyfile moves a keyfile to a different position
+func (km *KeyfileManager) MoveKeyfile(fromIndex, toIndex int) {
+	if fromIndex < 0 || fromIndex >= len(km.Keyfiles) ||
+		toIndex < 0 || toIndex >= len(km.Keyfiles) {
+		return
+	}
+	
+	// Remove from old position
+	keyfile := km.Keyfiles[fromIndex]
+	km.Keyfiles = append(km.Keyfiles[:fromIndex], km.Keyfiles[fromIndex+1:]...)
+	
+	// Insert at new position
+	if toIndex > fromIndex {
+		toIndex-- // Adjust for removed element
+	}
+	
+	km.Keyfiles = append(km.Keyfiles[:toIndex], 
+		append([]Keyfile{keyfile}, km.Keyfiles[toIndex:]...)...)
 }
 
 // HasKeyfiles returns true if any keyfiles are loaded

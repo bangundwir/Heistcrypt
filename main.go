@@ -83,6 +83,7 @@ func main() {
 		config:         cfg,
 		keyfileManager: keyfiles.NewKeyfileManager(),
 		encryptionMode: cryptoengine.ModeAES256GCM,
+		deleteAfter:    true, // Default to delete source files
 	}
 	state.setupUI(w)
 
@@ -133,15 +134,8 @@ func (s *AppState) setupUI(w fyne.Window) {
 		s.updateStrength(text)
 	}
 
-    genBtn := widget.NewButton("Generate", func() {
-		password, err := pw.Generate(20, true, true)
-        if err != nil {
-            dialog.ShowError(err, w)
-            return
-        }
-		passwordEntry.SetText(password)
-		s.password = password
-		s.updateStrength(password)
+	genBtn := widget.NewButton("Generate", func() {
+		s.showPasswordGeneratorDialog(w, passwordEntry)
 	})
 
 	// Encryption mode selection
@@ -735,6 +729,89 @@ func (s *AppState) showGenerateKeyfileDialog(w fyne.Window) {
 	d.Show()
 }
 
+func (s *AppState) showPasswordGeneratorDialog(w fyne.Window, passwordEntry *widget.Entry) {
+	// Length slider
+	lengthSlider := widget.NewSlider(8, 128)
+	lengthSlider.SetValue(20)
+	lengthLabel := widget.NewLabel("20")
+	lengthSlider.OnChanged = func(value float64) {
+		lengthLabel.SetText(fmt.Sprintf("%.0f", value))
+	}
+	
+	// Character type checkboxes
+	lowerCheck := widget.NewCheck("Lowercase (a-z)", nil)
+	lowerCheck.SetChecked(true)
+	upperCheck := widget.NewCheck("Uppercase (A-Z)", nil)
+	upperCheck.SetChecked(true)
+	digitsCheck := widget.NewCheck("Digits (0-9)", nil)
+	digitsCheck.SetChecked(true)
+	symbolsCheck := widget.NewCheck("Symbols (!@#$...)", nil)
+	symbolsCheck.SetChecked(true)
+	
+	// Preview
+	previewEntry := widget.NewEntry()
+	previewEntry.SetText("")
+	
+	// Generate function
+	generatePassword := func() {
+		opts := pw.GenerateOptions{
+			Length:     int(lengthSlider.Value),
+			UseLower:   lowerCheck.Checked,
+			UseUpper:   upperCheck.Checked,
+			UseDigits:  digitsCheck.Checked,
+			UseSymbols: symbolsCheck.Checked,
+		}
+		
+		password, err := pw.GenerateWithOptions(opts)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		previewEntry.SetText(password)
+	}
+	
+	// Generate initial password
+	generatePassword()
+	
+	// Auto-generate on option change
+	lowerCheck.OnChanged = func(bool) { generatePassword() }
+	upperCheck.OnChanged = func(bool) { generatePassword() }
+	digitsCheck.OnChanged = func(bool) { generatePassword() }
+	symbolsCheck.OnChanged = func(bool) { generatePassword() }
+	lengthSlider.OnChanged = func(float64) { generatePassword() }
+	
+	// Regenerate button
+	regenBtn := widget.NewButton("Regenerate", func() {
+		generatePassword()
+	})
+	
+	content := container.NewVBox(
+		widget.NewLabel("Password Generator"),
+		widget.NewSeparator(),
+		container.NewHBox(widget.NewLabel("Length:"), lengthSlider, lengthLabel),
+		widget.NewSeparator(),
+		lowerCheck,
+		upperCheck,
+		digitsCheck,
+		symbolsCheck,
+		widget.NewSeparator(),
+		widget.NewLabel("Preview:"),
+		previewEntry,
+		regenBtn,
+	)
+	
+	d := dialog.NewCustomConfirm("Generate Password", "Use Password", "Cancel", content, func(use bool) {
+		if use && previewEntry.Text != "" {
+			passwordEntry.SetText(previewEntry.Text)
+			s.password = previewEntry.Text
+			s.updateStrength(previewEntry.Text)
+		}
+	}, w)
+	
+	d.Resize(fyne.NewSize(400, 500))
+	d.Show()
+}
+
 func (s *AppState) buildAdvancedPanel() *widget.Accordion {
 	// Initialize defaults
 	s.splitSize = 100
@@ -743,9 +820,14 @@ func (s *AppState) buildAdvancedPanel() *widget.Accordion {
 	deleteCheck := widget.NewCheck("Delete source files after operation", func(checked bool) {
 		s.deleteAfter = checked
 	})
+	deleteCheck.SetChecked(true) // Set as default
 	
 	keyfilesCheck := widget.NewCheck("Use Keyfiles", func(checked bool) {
 		s.useKeyfiles = checked
+	})
+	
+	requireOrderCheck := widget.NewCheck("Require correct keyfile order", func(checked bool) {
+		s.keyfileManager.RequireOrder = checked
 	})
 	
 	paranoidCheck := widget.NewCheck("Paranoid Mode (XChaCha20 + Serpent)", func(checked bool) {
@@ -796,10 +878,11 @@ func (s *AppState) buildAdvancedPanel() *widget.Accordion {
 		s.recursiveMode = checked
 	})
 
-    content := container.NewVBox(
+	content := container.NewVBox(
 		deleteCheck,
 		widget.NewSeparator(),
 		keyfilesCheck,
+		container.NewPadded(requireOrderCheck),
 		paranoidCheck,
 		rsCheck,
 		forceCheck,
