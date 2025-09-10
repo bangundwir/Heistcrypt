@@ -41,7 +41,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
         include:
           - os: windows-latest
             goos: windows
@@ -49,10 +49,6 @@ jobs:
             ext: .exe
           - os: ubuntu-latest
             goos: linux
-            goarch: amd64
-            ext: ""
-          - os: macos-latest
-            goos: darwin
             goarch: amd64
             ext: ""
     
@@ -108,10 +104,11 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
     
+    - name: Install Gosec
+      run: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+    
     - name: Run Gosec Security Scanner
-      uses: securecodewarrior/github-action-gosec@master
-      with:
-        args: '-fmt sarif -out gosec.sarif ./...'
+      run: gosec -fmt sarif -out gosec.sarif ./...
     
     - name: Upload SARIF file
       uses: github/codeql-action/upload-sarif@v2

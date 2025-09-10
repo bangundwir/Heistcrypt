@@ -5,8 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 )
 
 // SizeUnit represents different size units

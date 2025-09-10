@@ -45,9 +45,10 @@ jobs:
         fi
         echo "Building version: $VERSION"
     
-    - name: Create build directory
+    - name: Create build directories
       run: |
         New-Item -ItemType Directory -Force -Path "${{ env.BUILD_DIR }}\windows"
+        New-Item -ItemType Directory -Force -Path "${{ env.BUILD_DIR }}\linux"
     
     - name: Install dependencies
       run: go mod tidy
@@ -69,6 +70,28 @@ jobs:
           Write-Host "Build successful! Size: $size bytes"
         } else {
           Write-Error "Build failed - executable not found"
+          exit 1
+        }
+    
+    - name: Build for Linux x64
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        $ldflags = "-s -w -X main.version=$version"
+        $output = "${{ env.BUILD_DIR }}\linux\${{ env.APP_NAME }}-v$version-Linux-x64"
+        
+        Write-Host "Building Linux version: $version"
+        Write-Host "Output: $output"
+        
+        $env:GOOS = "linux"
+        $env:GOARCH = "amd64"
+        go build -ldflags $ldflags -o $output .
+        
+        # Verify build
+        if (Test-Path $output) {
+          $size = (Get-Item $output).Length
+          Write-Host "Linux build successful! Size: $size bytes"
+        } else {
+          Write-Error "Linux build failed - executable not found"
           exit 1
         }
     
@@ -128,9 +151,10 @@ For more information, see README.md
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: hadescrypt-windows-v${{ steps.version.outputs.version }}
+        name: hadescrypt-builds-v${{ steps.version.outputs.version }}
         path: |
           ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
+          ${{ env.BUILD_DIR }}/linux/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Linux-x64
           ${{ env.BUILD_DIR }}/windows/dist/
         retention-days: 30
 
@@ -156,7 +180,7 @@ For more information, see README.md
     - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
-        name: hadescrypt-windows-v${{ steps.version.outputs.version }}
+        name: hadescrypt-builds-v${{ steps.version.outputs.version }}
         path: ./artifacts
     
     - name: Create Release
@@ -180,9 +204,14 @@ For more information, see README.md
           - Advanced options panel
           
           ### Installation
+          **Windows:**
           1. Download `HadesCrypt-v${{ steps.version.outputs.version }}-Windows-x64.exe`
           2. Run the executable (no installation required)
-          3. Start encrypting your files!
+          
+          **Linux:**
+          1. Download `HadesCrypt-v${{ steps.version.outputs.version }}-Linux-x64`
+          2. Make executable: `chmod +x HadesCrypt-v${{ steps.version.outputs.version }}-Linux-x64`
+          3. Run: `./HadesCrypt-v${{ steps.version.outputs.version }}-Linux-x64`
           
           ### Security Features
           - ✅ AES-256-GCM authenticated encryption
@@ -192,7 +221,8 @@ For more information, see README.md
           - ✅ Built-in integrity protection
           
           ### System Requirements
-          - Windows 10/11 (64-bit)
+          - **Windows**: Windows 10/11 (64-bit)
+          - **Linux**: x86_64 Linux distribution
           - No additional dependencies required
           
           ---
@@ -200,6 +230,7 @@ For more information, see README.md
           **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref_name }}
         files: |
           artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
+          artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Linux-x64
           artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64/*
         draft: false
         prerelease: false

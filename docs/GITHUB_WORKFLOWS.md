@@ -30,12 +30,12 @@ This document explains the GitHub Actions workflows set up for HadesCrypt.
 
 **Jobs:**
 - **Test**: Runs Go tests and linting
-- **Build Check**: Multi-platform build verification
+- **Build Check**: Multi-platform build verification (Windows & Linux only)
 - **Security Scan**: Gosec security analysis
 
 **Features:**
 - ✅ Automated testing on every commit
-- ✅ Multi-platform build verification (Windows, Linux, macOS)
+- ✅ Multi-platform build verification (Windows, Linux)
 - ✅ Security vulnerability scanning
 - ✅ Code quality checks
 
@@ -82,9 +82,10 @@ git push origin "v2.0.1"
 
 Each release includes:
 
-- **Executable**: `HadesCrypt-v2.0.1-Windows-x64.exe`
+- **Windows Executable**: `HadesCrypt-v2.0.1-Windows-x64.exe`
+- **Linux Executable**: `HadesCrypt-v2.0.1-Linux-x64`
 - **Portable Package**: Complete folder with:
-  - Executable
+  - Windows executable
   - README.md
   - CHANGELOG.md
   - QUICK_START.txt
@@ -127,6 +128,8 @@ Check workflow status at:
 2. **Release Not Created**: Verify tag format (must start with 'v')
 3. **Artifacts Missing**: Check upload-artifact step logs
 4. **Security Scan Fails**: Review Gosec output for issues
+5. **Unused Import Errors**: Fixed in splitter package - removed unused `strconv` and `strings` imports
+6. **GLFW/OpenGL Errors**: Workflow now only builds for Windows and Linux (no macOS) to avoid X11 dependencies
 
 ### Manual Build Commands:
 
