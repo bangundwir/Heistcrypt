@@ -24,17 +24,21 @@ import (
 )
 
 type AppState struct {
-	selectedPath     string
-	password         string
-	comments         string
-	strengthBar      *widget.ProgressBar
-	strengthLabel    *widget.Label
-	progressBar      *widget.ProgressBar
-	statusLabel      *widget.Label
-	fileInfoLabel    *widget.Label
-	dragDropLabel    *widget.Label
-	commentsEntry    *widget.Entry
-	config           *config.Config
+	selectedPath        string
+	password            string
+	confirmPassword     string
+	comments            string
+	strengthBar         *widget.ProgressBar
+	strengthLabel       *widget.Label
+	progressBar         *widget.ProgressBar
+	statusLabel         *widget.Label
+	fileInfoLabel       *widget.Label
+	dragDropLabel       *widget.Label
+	commentsEntry       *widget.Entry
+	passwordEntry       *widget.Entry
+	confirmPasswordEntry *widget.Entry
+	passwordMatchLabel  *widget.Label
+	config              *config.Config
 	
 	// Keyfiles
 	keyfileManager   *keyfiles.KeyfileManager
@@ -127,20 +131,38 @@ func (s *AppState) setupUI(w fyne.Window) {
     })
 
     // Password controls
-    passwordEntry := widget.NewPasswordEntry()
-    passwordEntry.SetPlaceHolder("Enter password…")
-	passwordEntry.OnChanged = func(text string) {
+	s.passwordEntry = widget.NewPasswordEntry()
+	s.passwordEntry.SetPlaceHolder("Enter password…")
+	s.passwordEntry.OnChanged = func(text string) {
 		s.password = text
 		s.updateStrength(text)
+		s.validatePasswordMatch()
 	}
 
-	genBtn := widget.NewButton("Generate", func() {
-		s.showPasswordGeneratorDialog(w, passwordEntry)
+	s.confirmPasswordEntry = widget.NewPasswordEntry()
+	s.confirmPasswordEntry.SetPlaceHolder("Confirm password…")
+	s.confirmPasswordEntry.OnChanged = func(text string) {
+		s.confirmPassword = text
+		s.validatePasswordMatch()
+	}
+
+	// Password match indicator
+	s.passwordMatchLabel = widget.NewLabel("")
+
+    genBtn := widget.NewButton("Generate", func() {
+		s.showPasswordGeneratorDialog(w)
 	})
 
 	// Encryption mode selection
 	encryptionModeSelect := widget.NewSelect(
-		[]string{"AES-256-GCM", "ChaCha20-Poly1305", "Paranoid (AES-256 + ChaCha20)"},
+		[]string{
+			"AES-256-GCM", 
+			"ChaCha20-Poly1305", 
+			"Paranoid (AES-256 + ChaCha20)",
+			"🛡️ Post-Quantum: Kyber-768",
+			"🛡️ Post-Quantum: Dilithium-3",
+			"🛡️ Post-Quantum: SPHINCS+",
+		},
 		func(selected string) {
 			switch selected {
 			case "AES-256-GCM":
@@ -149,6 +171,12 @@ func (s *AppState) setupUI(w fyne.Window) {
 				s.encryptionMode = cryptoengine.ModeChaCha20
 			case "Paranoid (AES-256 + ChaCha20)":
 				s.encryptionMode = cryptoengine.ModeParanoid
+			case "🛡️ Post-Quantum: Kyber-768":
+				s.encryptionMode = cryptoengine.ModePostQuantumKyber768
+			case "🛡️ Post-Quantum: Dilithium-3":
+				s.encryptionMode = cryptoengine.ModePostQuantumDilithium3
+			case "🛡️ Post-Quantum: SPHINCS+":
+				s.encryptionMode = cryptoengine.ModePostQuantumSPHINCS
 			}
 		},
 	)
@@ -222,11 +250,18 @@ func (s *AppState) setupUI(w fyne.Window) {
 
 	// Layout
 	passwordRow := container.NewBorder(
-		nil, nil,
+        nil, nil,
         widget.NewLabel("Password:"),
 		genBtn,
-        passwordEntry,
+        s.passwordEntry,
     )
+
+	confirmPasswordRow := container.NewBorder(
+		nil, nil,
+		widget.NewLabel("Confirm:"),
+		s.passwordMatchLabel,
+		s.confirmPasswordEntry,
+	)
 
 	strengthRow := container.NewBorder(
 		nil, nil,
@@ -267,13 +302,14 @@ func (s *AppState) setupUI(w fyne.Window) {
 		s.progressBar,
 	)
 
-    content := container.NewVBox(
+	content := container.NewVBox(
 		container.NewPadded(container.NewVBox(header, tagline)),
 		widget.NewSeparator(),
 		container.NewPadded(dragDropCard),
 		container.NewPadded(selectBtn),
 		widget.NewSeparator(),
 		container.NewPadded(passwordRow),
+		container.NewPadded(confirmPasswordRow),
 		container.NewPadded(strengthRow),
 		container.NewPadded(encryptionRow),
 		container.NewPadded(keyfilesSection),
@@ -283,8 +319,8 @@ func (s *AppState) setupUI(w fyne.Window) {
 		container.NewPadded(progressRow),
 		container.NewPadded(s.statusLabel),
 		widget.NewSeparator(),
-        advanced,
-    )
+		advanced,
+	)
 
 	// Set up drag and drop
 	w.SetOnDropped(func(position fyne.Position, uris []fyne.URI) {
@@ -355,15 +391,73 @@ func (s *AppState) updateStrength(password string) {
 	s.strengthLabel.SetText("Strength: " + label)
 }
 
+func (s *AppState) validatePasswordMatch() {
+	if s.password == "" && s.confirmPassword == "" {
+		s.passwordMatchLabel.SetText("")
+		return
+	}
+	
+	if s.confirmPassword == "" {
+		s.passwordMatchLabel.SetText("")
+		return
+	}
+	
+	if s.password == s.confirmPassword {
+		// Passwords match - show green checkmark with animation
+		s.passwordMatchLabel.SetText("✅ Match")
+		
+		// Animate the confirmation (simple color/text effect)
+		go s.animatePasswordMatch(true)
+	} else {
+		// Passwords don't match - show red X
+		s.passwordMatchLabel.SetText("❌ No Match")
+		
+		// Animate the mismatch
+		go s.animatePasswordMatch(false)
+	}
+}
+
+func (s *AppState) animatePasswordMatch(isMatch bool) {
+	if isMatch {
+		// Success animation - pulse green checkmark
+		for i := 0; i < 3; i++ {
+			time.Sleep(200 * time.Millisecond)
+			fyne.Do(func() {
+				s.passwordMatchLabel.SetText("✨ Match")
+			})
+			time.Sleep(200 * time.Millisecond)
+			fyne.Do(func() {
+				s.passwordMatchLabel.SetText("✅ Match")
+			})
+		}
+	} else {
+		// Error animation - pulse red X
+		for i := 0; i < 2; i++ {
+			time.Sleep(150 * time.Millisecond)
+			fyne.Do(func() {
+				s.passwordMatchLabel.SetText("⚠️ No Match")
+			})
+			time.Sleep(150 * time.Millisecond)
+			fyne.Do(func() {
+				s.passwordMatchLabel.SetText("❌ No Match")
+			})
+		}
+	}
+}
+
 func (s *AppState) doEncrypt(w fyne.Window) {
 	if s.selectedPath == "" {
 		dialog.ShowInformation("Select file", "Please select a file or folder to encrypt.", w)
         return
     }
 	if s.password == "" {
-        dialog.ShowInformation("Password required", "Please enter a password.", w)
-        return
-    }
+		dialog.ShowInformation("Password required", "Please enter a password.", w)
+		return
+	}
+	if s.password != s.confirmPassword {
+		dialog.ShowInformation("Password Mismatch", "Password and confirmation password do not match.", w)
+		return
+	}
 
 	outputPath := s.defaultOutputPathForEncrypt(s.selectedPath)
 	
@@ -729,7 +823,7 @@ func (s *AppState) showGenerateKeyfileDialog(w fyne.Window) {
 	d.Show()
 }
 
-func (s *AppState) showPasswordGeneratorDialog(w fyne.Window, passwordEntry *widget.Entry) {
+func (s *AppState) showPasswordGeneratorDialog(w fyne.Window) {
 	// Length slider
 	lengthSlider := widget.NewSlider(8, 128)
 	lengthSlider.SetValue(20)
@@ -802,9 +896,12 @@ func (s *AppState) showPasswordGeneratorDialog(w fyne.Window, passwordEntry *wid
 	
 	d := dialog.NewCustomConfirm("Generate Password", "Use Password", "Cancel", content, func(use bool) {
 		if use && previewEntry.Text != "" {
-			passwordEntry.SetText(previewEntry.Text)
+			s.passwordEntry.SetText(previewEntry.Text)
+			s.confirmPasswordEntry.SetText(previewEntry.Text)
 			s.password = previewEntry.Text
+			s.confirmPassword = previewEntry.Text
 			s.updateStrength(previewEntry.Text)
+			s.validatePasswordMatch()
 		}
 	}, w)
 	
@@ -878,7 +975,7 @@ func (s *AppState) buildAdvancedPanel() *widget.Accordion {
 		s.recursiveMode = checked
 	})
 
-	content := container.NewVBox(
+    content := container.NewVBox(
 		deleteCheck,
 		widget.NewSeparator(),
 		keyfilesCheck,

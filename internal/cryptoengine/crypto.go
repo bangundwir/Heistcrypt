@@ -12,6 +12,8 @@ import (
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
+	
+	"github.com/bangundwir/HadesCrypt/internal/postquantum"
 )
 
 // min returns the minimum of two integers
@@ -32,6 +34,9 @@ const (
 	ModeAES256GCM EncryptionMode = iota
 	ModeChaCha20
 	ModeParanoid // AES-256-GCM + ChaCha20-Poly1305
+	ModePostQuantumKyber768
+	ModePostQuantumDilithium3
+	ModePostQuantumSPHINCS
 )
 
 const (
@@ -101,9 +106,10 @@ func EncryptFileWithMode(inputPath, outputPath string, password []byte, mode Enc
 
     key := argon2.IDKey(password, salt, argonTime, argonMemory, argonThreads, keyLen)
 
-    // Create AEAD cipher based on mode
+    // Create cipher based on mode
     var aead cipher.AEAD
     var aead2 cipher.AEAD // For paranoid mode
+    var pqCipher *postquantum.PostQuantumCipher // For post-quantum modes
     
     switch mode {
     case ModeAES256GCM:
@@ -137,6 +143,12 @@ func EncryptFileWithMode(inputPath, outputPath string, password []byte, mode Enc
         if err != nil {
             return err
         }
+    case ModePostQuantumKyber768:
+        pqCipher = postquantum.NewPostQuantumCipher(postquantum.Kyber768)
+    case ModePostQuantumDilithium3:
+        pqCipher = postquantum.NewPostQuantumCipher(postquantum.Dilithium3)
+    case ModePostQuantumSPHINCS:
+        pqCipher = postquantum.NewPostQuantumCipher(postquantum.SPHINCS)
     default:
         return fmt.Errorf("unsupported encryption mode: %d", mode)
     }
@@ -223,14 +235,33 @@ func EncryptFileWithMode(inputPath, outputPath string, password []byte, mode Enc
         }
 
         binary.BigEndian.PutUint32(nonce[noncePrefixLen:], counter)
-        sealed := aead.Seal(nil, nonce, buf[:n], nil)
         
-        // Apply second layer encryption for paranoid mode
-        if mode == ModeParanoid {
-            // Use different nonce for second layer
-            nonce2 := make([]byte, aead2.NonceSize())
-            copy(nonce2, nonce[:min(len(nonce2), len(nonce))])
-            sealed = aead2.Seal(nil, nonce2, sealed, nil)
+        var sealed []byte
+        
+        // Choose encryption method based on mode
+        if pqCipher != nil {
+            // Post-quantum encryption
+            pqNonce, err := pqCipher.GenerateNonce()
+            if err != nil {
+                return fmt.Errorf("generate PQ nonce: %w", err)
+            }
+            sealed, err = pqCipher.Encrypt(buf[:n], key, pqNonce)
+            if err != nil {
+                return fmt.Errorf("PQ encrypt: %w", err)
+            }
+            // Prepend nonce to ciphertext
+            sealed = append(pqNonce, sealed...)
+        } else {
+            // Traditional AEAD encryption
+            sealed = aead.Seal(nil, nonce, buf[:n], nil)
+            
+            // Apply second layer encryption for paranoid mode
+            if mode == ModeParanoid {
+                // Use different nonce for second layer
+                nonce2 := make([]byte, aead2.NonceSize())
+                copy(nonce2, nonce[:min(len(nonce2), len(nonce))])
+                sealed = aead2.Seal(nil, nonce2, sealed, nil)
+            }
         }
         
         if _, err := out.Write(sealed); err != nil {
