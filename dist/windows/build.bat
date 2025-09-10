@@ -52,7 +52,8 @@ if %errorlevel% neq 0 (
 )
 
 echo Step 2: Building executable...
-go build -ldflags "-s -w -X main.version=%VERSION%" -o "dist\windows\HadesCrypt.exe" .
+REM Always build as GUI app to avoid console window
+go build -ldflags "-s -w -H windowsgui -X main.version=%VERSION%" -o "dist\windows\HadesCrypt.exe" .
 if %errorlevel% neq 0 (
     echo Error: Build failed
     pause
@@ -69,8 +70,8 @@ if %errorlevel% equ 0 (
         echo Resources embedded successfully
         move rsrc.syso ..\..\
         cd ..\..
-        echo Rebuilding with resources...
-        go build -ldflags "-s -w -H windowsgui -X main.version=%VERSION%" -o "dist\windows\HadesCrypt.exe" .
+    echo Rebuilding with resources...
+    go build -ldflags "-s -w -H windowsgui -X main.version=%VERSION%" -o "dist\windows\HadesCrypt.exe" .
         del rsrc.syso
     ) else (
         echo Warning: Failed to embed resources

@@ -23,6 +23,9 @@ import (
 	uiutil "github.com/bangundwir/HadesCrypt/internal/ui"
 )
 
+// version is set at build time via -ldflags "-X main.version=<ver>"
+var version string
+
 type AppState struct {
 	selectedPath        string
 	password            string
@@ -63,6 +66,15 @@ type AppState struct {
 }
 
 func main() {
+	// version is injected via -X main.version at build time (see dist/windows/build.bat)
+	// default to VERSION file or "dev"
+	if version == "" {
+		if data, err := os.ReadFile("VERSION"); err == nil {
+			version = strings.TrimSpace(string(data))
+		} else {
+			version = "dev"
+		}
+	}
     application := app.NewWithID("hadescrypt")
 	
 	// Load configuration
@@ -79,7 +91,7 @@ func main() {
     application.Settings().SetTheme(theme.DarkTheme())
 	}
 
-    w := application.NewWindow("HadesCrypt 🔱 — Lock your secrets, rule your data.")
+	w := application.NewWindow(fmt.Sprintf("HadesCrypt v%s 🔱 — Lock your secrets, rule your data.", version))
 	w.Resize(fyne.NewSize(cfg.WindowWidth, cfg.WindowHeight))
 	w.CenterOnScreen()
 
