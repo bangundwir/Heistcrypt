@@ -29,3 +29,21 @@ Thumbs.db
 # Key and config files (if sensitive)
 internal/keyfiles/*.key
 internal/config/*.env
+
+# Build artifacts
+dist/windows/*.exe
+dist/linux/*
+dist/macos/*
+
+# Temporary files
+*.temp
+temp_*
+
+# Test files
+test-*.exe
+test-*.bin
+
+# Release artifacts
+*.zip
+*.tar.gz
+release-*

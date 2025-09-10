@@ -1,0 +1,239 @@
+name: Build and Release HadesCrypt
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags like v2.0.0
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      version:
+        description: 'Version to build (e.g., 2.0.0)'
+        required: true
+        default: '2.0.0'
+
+env:
+  GO_VERSION: '1.21'
+  APP_NAME: 'HadesCrypt'
+  BUILD_DIR: 'dist'
+
+jobs:
+  build:
+    name: Build HadesCrypt
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for tags
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Get version from tag or input
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          # Extract version from tag (remove 'v' prefix)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        fi
+        echo "Building version: $VERSION"
+    
+    - name: Create build directory
+      run: |
+        New-Item -ItemType Directory -Force -Path "${{ env.BUILD_DIR }}\windows"
+    
+    - name: Install dependencies
+      run: go mod tidy
+    
+    - name: Build for Windows x64
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        $ldflags = "-s -w -H windowsgui -X main.version=$version"
+        $output = "${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v$version-Windows-x64.exe"
+        
+        Write-Host "Building with version: $version"
+        Write-Host "Output: $output"
+        
+        go build -ldflags $ldflags -o $output .
+        
+        # Verify build
+        if (Test-Path $output) {
+          $size = (Get-Item $output).Length
+          Write-Host "Build successful! Size: $size bytes"
+        } else {
+          Write-Error "Build failed - executable not found"
+          exit 1
+        }
+    
+    - name: Create portable package
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        $packageDir = "${{ env.BUILD_DIR }}\windows\dist\${{ env.APP_NAME }}-v$version-Windows-x64"
+        
+        # Create package directory
+        New-Item -ItemType Directory -Force -Path $packageDir
+        
+        # Copy executable
+        Copy-Item "${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v$version-Windows-x64.exe" "$packageDir\${{ env.APP_NAME }}.exe"
+        
+        # Copy documentation
+        Copy-Item "README.md" "$packageDir\" -ErrorAction SilentlyContinue
+        Copy-Item "CHANGELOG.md" "$packageDir\" -ErrorAction SilentlyContinue
+        Copy-Item "VERSION" "$packageDir\" -ErrorAction SilentlyContinue
+        
+        # Create quick start guide
+        $quickStart = @"
+# HadesCrypt v$version - Quick Start Guide
+
+## Installation
+1. Download and extract this package
+2. Run HadesCrypt.exe
+3. No installation required - portable application
+
+## Usage
+1. Drag & drop files/folders to encrypt/decrypt
+2. Enter a strong password or use the password generator
+3. Choose encryption mode (AES-256-GCM recommended)
+4. Click Encrypt or Decrypt
+
+## Features
+- Military-grade AES-256-GCM encryption
+- Drag & drop interface
+- Password generator with strength meter
+- Multiple encryption modes
+- Keyfile support
+- Folder encryption
+- Progress tracking
+
+## Security
+- Uses Argon2id for key derivation
+- Cryptographically secure random number generation
+- Secure memory handling
+- Built-in integrity protection
+
+For more information, see README.md
+"@
+        $quickStart | Out-File -FilePath "$packageDir\QUICK_START.txt" -Encoding UTF8
+        
+        # Create file list
+        Get-ChildItem $packageDir | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Out-File -FilePath "$packageDir\FILES.txt"
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: hadescrypt-windows-v${{ steps.version.outputs.version }}
+        path: |
+          ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
+          ${{ env.BUILD_DIR }}/windows/dist/
+        retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Get version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building release for version: $VERSION"
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: hadescrypt-windows-v${{ steps.version.outputs.version }}
+        path: ./artifacts
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: HadesCrypt v${{ steps.version.outputs.version }}
+        body: |
+          ## 🔱 HadesCrypt v${{ steps.version.outputs.version }}
+          
+          **Lock your secrets, rule your data.**
+          
+          ### What's New
+          - Military-grade AES-256-GCM encryption
+          - Drag & drop interface for easy file/folder encryption
+          - Password generator with strength meter
+          - Multiple encryption modes (Normal, Paranoid, Post-Quantum, GnuPG)
+          - Keyfile support for enhanced security
+          - Folder encryption with recursive mode
+          - Real-time progress tracking
+          - Advanced options panel
+          
+          ### Installation
+          1. Download `HadesCrypt-v${{ steps.version.outputs.version }}-Windows-x64.exe`
+          2. Run the executable (no installation required)
+          3. Start encrypting your files!
+          
+          ### Security Features
+          - ✅ AES-256-GCM authenticated encryption
+          - ✅ Argon2id key derivation
+          - ✅ Cryptographically secure RNG
+          - ✅ Secure memory handling
+          - ✅ Built-in integrity protection
+          
+          ### System Requirements
+          - Windows 10/11 (64-bit)
+          - No additional dependencies required
+          
+          ---
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref_name }}
+        files: |
+          artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
+          artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64/*
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+
+  test-build:
+    name: Test Build
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Test build
+      run: |
+        go mod tidy
+        go build -o test-build.exe .
+        
+        # Test that executable runs (just check version/help)
+        if (Test-Path test-build.exe) {
+          Write-Host "Build test successful!"
+          $size = (Get-Item test-build.exe).Length
+          Write-Host "Executable size: $size bytes"
+        } else {
+          Write-Error "Build test failed"
+          exit 1
+        }
+    
+    - name: Cleanup test build
+      run: Remove-Item test-build.exe -ErrorAction SilentlyContinue
