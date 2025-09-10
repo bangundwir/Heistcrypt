@@ -124,7 +124,7 @@ For more information, see README.md
 
         Get-ChildItem $packageDir | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Out-File -FilePath "$packageDir\FILES.txt"
 
-    - name: Create ZIP package and checksums
+  - name: Create ZIP package and checksums
       shell: pwsh
       run: |
         $version = "${{ steps.version.outputs.version }}"
@@ -140,16 +140,16 @@ For more information, see README.md
         $zipHash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash
         "${{ env.APP_NAME }}-v$version-Windows-x64.exe  $exeHash" | Out-File -FilePath $checksums -Encoding ascii
         "${{ env.APP_NAME }}-v$version-Windows-x64.zip  $zipHash" | Out-File -FilePath $checksums -Append -Encoding ascii
-    
-  - name: Upload build artifacts
+
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: hadescrypt-windows-v${{ steps.version.outputs.version }}
         path: |
-      ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
-      ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.zip
-      ${{ env.BUILD_DIR }}/windows/SHA256SUMS.txt
-      ${{ env.BUILD_DIR }}/windows/dist/
+          ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
+          ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.zip
+          ${{ env.BUILD_DIR }}/windows/SHA256SUMS.txt
+          ${{ env.BUILD_DIR }}/windows/dist/
         retention-days: 30
 
   release:
@@ -171,12 +171,12 @@ For more information, see README.md
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Building release for version: $VERSION"
     
-    - name: Download build artifacts
+  - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
         name: hadescrypt-windows-v${{ steps.version.outputs.version }}
         path: ./artifacts
-    
+
   - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
