@@ -37,6 +37,7 @@ const (
 	ModePostQuantumKyber768
 	ModePostQuantumDilithium3
 	ModePostQuantumSPHINCS
+	ModeGnuPG // GnuPG/OpenPGP encryption
 )
 
 const (
@@ -149,6 +150,9 @@ func EncryptFileWithMode(inputPath, outputPath string, password []byte, mode Enc
         pqCipher = postquantum.NewPostQuantumCipher(postquantum.Dilithium3)
     case ModePostQuantumSPHINCS:
         pqCipher = postquantum.NewPostQuantumCipher(postquantum.SPHINCS)
+    case ModeGnuPG:
+        // GnuPG mode uses external GPG binary, handled separately
+        return EncryptFileWithGnuPG(inputPath, outputPath, password, onProgress)
     default:
         return fmt.Errorf("unsupported encryption mode: %d", mode)
     }
@@ -396,6 +400,9 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
         pqCipher = postquantum.NewPostQuantumCipher(postquantum.Dilithium3)
     case ModePostQuantumSPHINCS:
         pqCipher = postquantum.NewPostQuantumCipher(postquantum.SPHINCS)
+    case ModeGnuPG:
+        // GnuPG mode uses external GPG binary, handled separately
+        return DecryptFileWithGnuPG(inputPath, outputPath, password, onProgress)
     default:
         return fmt.Errorf("unsupported encryption mode: %d", mode)
     }

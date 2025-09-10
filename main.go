@@ -162,6 +162,7 @@ func (s *AppState) setupUI(w fyne.Window) {
 			"🛡️ Post-Quantum: Kyber-768",
 			"🛡️ Post-Quantum: Dilithium-3",
 			"🛡️ Post-Quantum: SPHINCS+",
+			"🔐 GnuPG/OpenPGP (Standard)",
 		},
 		func(selected string) {
 			switch selected {
@@ -177,6 +178,8 @@ func (s *AppState) setupUI(w fyne.Window) {
 				s.encryptionMode = cryptoengine.ModePostQuantumDilithium3
 			case "🛡️ Post-Quantum: SPHINCS+":
 				s.encryptionMode = cryptoengine.ModePostQuantumSPHINCS
+			case "🔐 GnuPG/OpenPGP (Standard)":
+				s.encryptionMode = cryptoengine.ModeGnuPG
 			}
 		},
 	)
@@ -581,7 +584,12 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 		if isEncryptedFolder && s.recursiveMode {
 			err = s.decryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress)
 		} else {
-			err = cryptoengine.DecryptFile(s.selectedPath, outputPath, finalPassword, s.forceDecrypt, onProgress)
+			// Check if it's a GnuPG file
+			if s.isGnuPGFile(s.selectedPath) {
+				err = cryptoengine.DecryptFileWithGnuPG(s.selectedPath, outputPath, finalPassword, onProgress)
+			} else {
+				err = cryptoengine.DecryptFile(s.selectedPath, outputPath, finalPassword, s.forceDecrypt, onProgress)
+			}
 		}
 		
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -699,14 +707,66 @@ func (s *AppState) decryptDirectory(encryptedFile, outputDir string, password []
 }
 
 func (s *AppState) defaultOutputPathForEncrypt(inPath string) string {
+	// Use appropriate extension based on encryption mode
+	if s.encryptionMode == cryptoengine.ModeGnuPG {
+		return inPath + ".gpg"
+	}
 	return inPath + ".hadescrypt"
 }
 
 func (s *AppState) defaultOutputPathForDecrypt(inPath string) string {
-	if strings.HasSuffix(strings.ToLower(inPath), ".hadescrypt") {
+	lowerPath := strings.ToLower(inPath)
+	
+	// Handle GnuPG files
+	if strings.HasSuffix(lowerPath, ".gpg") {
+		return strings.TrimSuffix(inPath, ".gpg")
+	}
+	if strings.HasSuffix(lowerPath, ".pgp") {
+		return strings.TrimSuffix(inPath, ".pgp")
+	}
+	
+	// Handle HadesCrypt files
+	if strings.HasSuffix(lowerPath, ".hades") {
+		return strings.TrimSuffix(inPath, ".hades")
+	}
+	if strings.HasSuffix(lowerPath, ".hadescrypt") {
 		return strings.TrimSuffix(inPath, filepath.Ext(inPath))
 	}
+	
 	return inPath + ".dec"
+}
+
+// isGnuPGFile checks if the file is a GnuPG/OpenPGP file
+func (s *AppState) isGnuPGFile(filePath string) bool {
+	// Check by extension first
+	lowerPath := strings.ToLower(filePath)
+	if strings.HasSuffix(lowerPath, ".gpg") || strings.HasSuffix(lowerPath, ".pgp") {
+		return true
+	}
+	
+	// Check by file content (OpenPGP magic bytes)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	
+	// Read first few bytes to check for OpenPGP format
+	header := make([]byte, 4)
+	if _, err := file.Read(header); err != nil {
+		return false
+	}
+	
+	// OpenPGP files typically start with specific packet headers
+	if len(header) > 0 {
+		firstByte := header[0]
+		// Check for OpenPGP packet format (high bit set indicates OpenPGP packet)
+		if (firstByte&0x80) != 0 {
+			return true
+		}
+	}
+	
+	return false
 }
 
 func (s *AppState) updateKeyfilesDisplay() {
