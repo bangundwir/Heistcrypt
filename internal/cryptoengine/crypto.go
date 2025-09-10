@@ -208,13 +208,32 @@ func EncryptFileWithMode(inputPath, outputPath string, password []byte, mode Enc
             // last partial chunk
             if n > 0 {
                 binary.BigEndian.PutUint32(nonce[noncePrefixLen:], counter)
-                sealed := aead.Seal(nil, nonce, buf[:n], nil)
                 
-                // Apply second layer encryption for paranoid mode
-                if mode == ModeParanoid {
-                    nonce2 := make([]byte, aead2.NonceSize())
-                    copy(nonce2, nonce[:min(len(nonce2), len(nonce))])
-                    sealed = aead2.Seal(nil, nonce2, sealed, nil)
+                var sealed []byte
+                
+                // Choose encryption method based on mode
+                if pqCipher != nil {
+                    // Post-quantum encryption
+                    pqNonce, err := pqCipher.GenerateNonce()
+                    if err != nil {
+                        return fmt.Errorf("generate PQ nonce: %w", err)
+                    }
+                    sealed, err = pqCipher.Encrypt(buf[:n], key, pqNonce)
+                    if err != nil {
+                        return fmt.Errorf("PQ encrypt: %w", err)
+                    }
+                    // Prepend nonce to ciphertext
+                    sealed = append(pqNonce, sealed...)
+                } else {
+                    // Traditional AEAD encryption
+                    sealed = aead.Seal(nil, nonce, buf[:n], nil)
+                    
+                    // Apply second layer encryption for paranoid mode
+                    if mode == ModeParanoid {
+                        nonce2 := make([]byte, aead2.NonceSize())
+                        copy(nonce2, nonce[:min(len(nonce2), len(nonce))])
+                        sealed = aead2.Seal(nil, nonce2, sealed, nil)
+                    }
                 }
                 
                 if _, err := out.Write(sealed); err != nil {
@@ -337,6 +356,7 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
     // Create AEAD cipher based on mode
     var aead cipher.AEAD
     var aead2 cipher.AEAD // For paranoid mode
+    var pqCipher *postquantum.PostQuantumCipher // For post-quantum modes
     
     switch mode {
     case ModeAES256GCM:
@@ -370,6 +390,12 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
         if err != nil {
             return err
         }
+    case ModePostQuantumKyber768:
+        pqCipher = postquantum.NewPostQuantumCipher(postquantum.Kyber768)
+    case ModePostQuantumDilithium3:
+        pqCipher = postquantum.NewPostQuantumCipher(postquantum.Dilithium3)
+    case ModePostQuantumSPHINCS:
+        pqCipher = postquantum.NewPostQuantumCipher(postquantum.SPHINCS)
     default:
         return fmt.Errorf("unsupported encryption mode: %d", mode)
     }
@@ -400,7 +426,15 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
 
     // Helper to read exactly N ciphertext bytes for a given plaintext length
     readCipher := func(nPlain int) ([]byte, error) {
-        need := nPlain + gcmOverhead
+        var need int
+        if pqCipher != nil {
+            // Post-quantum: nonce + plaintext + auth tag (32 bytes)
+            nonceSize := pqCipher.GetNonceSize()
+            authTagSize := 32 // SHA-256 tag size from postquantum implementation
+            need = nPlain + nonceSize + authTagSize
+        } else {
+            need = nPlain + gcmOverhead
+        }
         buf := make([]byte, need)
         if _, err := io.ReadFull(in, buf); err != nil {
             return nil, err
@@ -419,7 +453,20 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
             
             // Decrypt with appropriate layers based on mode
             var plain []byte
-            if mode == ModeParanoid {
+            if pqCipher != nil {
+                // Post-quantum decryption
+                // Extract nonce from beginning of ciphertext
+                nonceSize := pqCipher.GetNonceSize()
+                if len(cipherChunk) < nonceSize {
+                    return fmt.Errorf("PQ ciphertext too short, need at least %d bytes", nonceSize)
+                }
+                pqNonce := cipherChunk[:nonceSize]
+                cipherData := cipherChunk[nonceSize:]
+                plain, err = pqCipher.Decrypt(cipherData, key, pqNonce)
+                if err != nil {
+                    return fmt.Errorf("PQ decrypt: %w", err)
+                }
+            } else if mode == ModeParanoid {
                 // First decrypt with ChaCha20 (outer layer)
                 nonce2 := make([]byte, aead2.NonceSize())
                 copy(nonce2, nonce[:min(len(nonce2), len(nonce))])
@@ -459,7 +506,20 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
         
         // Decrypt with appropriate layers based on mode
         var plain []byte
-        if mode == ModeParanoid {
+        if pqCipher != nil {
+            // Post-quantum decryption
+            // Extract nonce from beginning of ciphertext
+            nonceSize := pqCipher.GetNonceSize()
+            if len(cipherChunk) < nonceSize {
+                return fmt.Errorf("PQ ciphertext too short, need at least %d bytes", nonceSize)
+            }
+            pqNonce := cipherChunk[:nonceSize]
+            cipherData := cipherChunk[nonceSize:]
+            plain, err = pqCipher.Decrypt(cipherData, key, pqNonce)
+            if err != nil {
+                return fmt.Errorf("PQ decrypt: %w", err)
+            }
+        } else if mode == ModeParanoid {
             // First decrypt with ChaCha20 (outer layer)
             nonce2 := make([]byte, aead2.NonceSize())
             copy(nonce2, nonce[:min(len(nonce2), len(nonce))])
