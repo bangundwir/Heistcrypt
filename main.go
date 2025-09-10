@@ -365,6 +365,7 @@ func (s *AppState) updateFileInfo() {
 	if s.selectedPath == "" {
 		s.dragDropLabel.SetText("[ Drag & Drop your files here ]")
 		s.fileInfoLabel.SetText("")
+		s.commentsEntry.SetText("") // Clear comments
 		return
 	}
 
@@ -375,16 +376,50 @@ func (s *AppState) updateFileInfo() {
 	if err != nil {
 		s.dragDropLabel.SetText("[ Drag & Drop your files here ]")
 		s.fileInfoLabel.SetText("Error: " + err.Error())
+		s.commentsEntry.SetText("")
 		return
 	}
 
 	if info.IsDir() {
 		s.dragDropLabel.SetText("📁 " + fileName)
 		s.fileInfoLabel.SetText("Folder selected")
+		// Don't clear comments for directories, user might want to add them
 	} else {
 		s.dragDropLabel.SetText("📄 " + fileName)
 		sizeText := uiutil.HumanBytes(info.Size())
-		s.fileInfoLabel.SetText(fmt.Sprintf("Size: %s", sizeText))
+		
+		// Try to get detailed file information for encrypted files
+		fileInfo, err := cryptoengine.GetFileInfo(s.selectedPath)
+		if err == nil {
+			format := fileInfo["format"].(string)
+			
+			if format == "HadesCrypt" {
+				// HadesCrypt encrypted file
+				modeName := fileInfo["encryption_mode_name"].(string)
+				s.fileInfoLabel.SetText(fmt.Sprintf("🔒 Size: %s - %s", sizeText, modeName))
+				
+				// Extract and display comments
+				if comments, ok := fileInfo["comments"].(string); ok && comments != "" {
+					s.commentsEntry.SetText(comments)
+					s.comments = comments
+				} else {
+					// Clear comments for encrypted files with no comments
+					s.commentsEntry.SetText("")
+					s.comments = ""
+				}
+			} else if format == "GnuPG/OpenPGP" {
+				// GnuPG encrypted file
+				s.fileInfoLabel.SetText(fmt.Sprintf("🔐 Size: %s - GnuPG/OpenPGP", sizeText))
+				// GnuPG files don't store comments, but don't clear existing ones
+			} else {
+				// Regular file
+				s.fileInfoLabel.SetText(fmt.Sprintf("Size: %s", sizeText))
+				// Don't clear comments for regular files
+			}
+		} else {
+			// Fallback for files that can't be analyzed
+			s.fileInfoLabel.SetText(fmt.Sprintf("Size: %s", sizeText))
+		}
 	}
 }
 
