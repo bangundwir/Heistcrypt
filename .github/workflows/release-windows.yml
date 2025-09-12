@@ -37,10 +37,21 @@ jobs:
       - name: Install MSYS2 and Mingw-w64 toolchain
         uses: msys2/setup-msys2@v2
         with:
+          msystem: MINGW64
           update: true
           install: >-
             base-devel
             mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-gcc
+
+      - name: Verify GCC
+        shell: pwsh
+        run: |
+          if (Test-Path 'C:\msys64\mingw64\bin\gcc.exe') {
+            & 'C:\msys64\mingw64\bin\gcc.exe' --version | Select-Object -First 1 | Write-Host
+          } else {
+            Write-Error 'gcc not found at C:\\msys64\\mingw64\\bin\\gcc.exe'; Get-ChildItem -Recurse C:\msys64 -Filter gcc.exe -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host $_.FullName }
+          }
 
       - name: Derive Version
         id: version
@@ -81,7 +92,11 @@ jobs:
         env:
           CGO_ENABLED: '1'
           CC: C:\msys64\mingw64\bin\gcc.exe
+          GOOS: windows
+          GOARCH: amd64
         run: |
+          $env:Path = 'C:\msys64\mingw64\bin;' + $env:Path
+          go env
           New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
           $ld = "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.version }}"
           $out = "dist\\windows\\${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe"
