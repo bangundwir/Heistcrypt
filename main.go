@@ -33,6 +33,7 @@ var version string
 
 type AppState struct {
 	selectedPath        string
+	selectedPaths       []string
 	password            string
 	confirmPassword     string
 	comments            string
@@ -69,6 +70,32 @@ type AppState struct {
 	compressFiles    bool
 	deniabilityMode  bool
 	recursiveMode    bool
+}
+
+// computeMixedSelectionSize walks selectedPaths computing total bytes that will be processed.
+// For folders: sums all regular files (excluding already encrypted outputs) according to mode.
+func (s *AppState) computeMixedSelectionSize(recursive bool) (int64, map[string]int64) {
+	sizes := make(map[string]int64)
+	var total int64
+	for _, p := range s.selectedPaths {
+		fi, err := os.Stat(p); if err != nil { continue }
+		if fi.IsDir() {
+			// sum all eligible files inside
+			filepath.Walk(p, func(sp string, info os.FileInfo, err error) error {
+				if err != nil || info == nil { return nil }
+				if info.IsDir() { return nil }
+				low := strings.ToLower(sp)
+				if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { return nil }
+				total += info.Size()
+				sizes[p] += info.Size()
+				return nil
+			})
+		} else if fi.Mode().IsRegular() {
+			total += fi.Size()
+			sizes[p] = fi.Size()
+		}
+	}
+	return total, sizes
 }
 
 func main() {
@@ -355,10 +382,15 @@ func (s *AppState) setupUI(w fyne.Window) {
 
 	// Set up drag and drop
 	w.SetOnDropped(func(position fyne.Position, uris []fyne.URI) {
-		if len(uris) > 0 {
-			path := uris[0].Path()
-			s.setSelectedFile(path)
+		if len(uris) == 0 { return }
+		if len(uris) == 1 {
+			s.setSelectedFile(uris[0].Path())
+			return
 		}
+		var paths []string
+		for _, u := range uris { paths = append(paths, u.Path()) }
+		if len(paths) == 1 { s.setSelectedFile(paths[0]); return }
+		s.setSelectedFiles(paths)
 	})
 
 	w.SetContent(container.NewScroll(content))
@@ -401,15 +433,42 @@ func (s *AppState) showFolderDialog(w fyne.Window) {
 }
 
 func (s *AppState) setSelectedFile(path string) {
+	// Single selection resets multi selection
 	s.selectedPath = path
+	s.selectedPaths = nil
 	s.updateFileInfo()
 }
 
+// setSelectedFiles sets multiple file selections (files only, no directories yet)
+func (s *AppState) setSelectedFiles(paths []string) {
+    s.selectedPath = ""
+    s.selectedPaths = paths
+    s.updateFileInfo()
+}
+
 func (s *AppState) updateFileInfo() {
-	if s.selectedPath == "" {
+	if s.selectedPath == "" && len(s.selectedPaths) == 0 {
 		s.dragDropLabel.SetText("[ Drag & Drop your files here ]")
 		s.fileInfoLabel.SetText("")
-		s.commentsEntry.SetText("") // Clear comments
+		s.commentsEntry.SetText("")
+		return
+	}
+
+	if len(s.selectedPaths) > 0 {
+		// Mixed multi selection summary
+		var totalSize int64
+		files := 0
+		folders := 0
+		for _, p := range s.selectedPaths {
+			if fi, err := os.Stat(p); err == nil {
+				if fi.IsDir() { folders++ } else if fi.Mode().IsRegular() { files++; totalSize += fi.Size() }
+			}
+		}
+		icon := "📄"
+		if folders > 0 { icon = "📂" }
+		label := fmt.Sprintf("%s %d item(s) (%d file(s), %d folder(s))", icon, len(s.selectedPaths), files, folders)
+		s.dragDropLabel.SetText(label)
+		s.fileInfoLabel.SetText(fmt.Sprintf("Regular file bytes (pre-archive): %s", uiutil.HumanBytes(totalSize)))
 		return
 	}
 
@@ -566,10 +625,10 @@ func (s *AppState) animatePasswordMatch(isMatch bool) {
 
 func (s *AppState) doEncrypt(w fyne.Window) {
 	s.cancelRequested.Store(false)
-	if s.selectedPath == "" {
-		dialog.ShowInformation("Select file", "Please select a file or folder to encrypt.", w)
-        return
-    }
+	if s.selectedPath == "" && len(s.selectedPaths) == 0 {
+		dialog.ShowInformation("Select input", "Please select a file, folder, or multiple files to encrypt.", w)
+		return
+	}
 	if s.password == "" {
 		dialog.ShowInformation("Password required", "Please enter a password.", w)
 		return
@@ -579,19 +638,14 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 		return
 	}
 
-	outputPath := s.defaultOutputPathForEncrypt(s.selectedPath)
-	
-	// Check if input is a directory
-	info, err := os.Stat(s.selectedPath)
-        if err != nil {
-            dialog.ShowError(err, w)
-            return
-        }
-
-	if info.IsDir() && !s.recursiveMode {
-		// If recursive mode disabled, we will use archive+encrypt approach (existing encryptDirectory)
-		// Provide info to user that they can switch to per-file mode.
-		// (No blocking return anymore)
+	var singleInfo os.FileInfo
+	var outputPath string
+	if s.selectedPath != "" {
+		var err error
+		outputPath = s.defaultOutputPathForEncrypt(s.selectedPath)
+		singleInfo, err = os.Stat(s.selectedPath)
+		if err != nil { dialog.ShowError(err, w); return }
+		if singleInfo.IsDir() && !s.recursiveMode { /* archive mode comment */ }
 	}
 
 	s.statusLabel.SetText("Encrypting…")
@@ -611,81 +665,152 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 
         start := time.Now()
 		var encErr error
-
-		// Prepare password with keyfiles
 		finalPassword := []byte(s.password)
-		if s.keyfileManager.HasKeyfiles() {
-			finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password))
-		}
+		if s.keyfileManager.HasKeyfiles() { finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password)) }
 
-		if info.IsDir() {
-			if s.recursiveMode {
-				encErr = s.encryptDirectoryRecursive(s.selectedPath, finalPassword, onProgress)
-			} else {
-				// Archive first then encrypt single archive outputPath
-				encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress)
+		if len(s.selectedPaths) > 0 { // multi-file mode
+			// Aggregate bytes across files & folders
+			grandTotal, _ := s.computeMixedSelectionSize(s.recursiveMode)
+			var processed int64
+			for idx, p := range s.selectedPaths {
+				if s.cancelRequested.Load() { encErr = fmt.Errorf("canceled"); break }
+				fi, err := os.Stat(p); if err != nil { continue }
+				base := filepath.Base(p)
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("Encrypting %d/%d: %s", idx+1, len(s.selectedPaths), base)) })
+				if fi.IsDir() {
+					// Choose strategy: recursive or archive
+					if s.recursiveMode {
+						cerr := s.encryptDirectoryRecursive(p, finalPassword, func(done,total int64){ if grandTotal>0 { onProgress(processed+done, grandTotal) } })
+						if cerr != nil { encErr = cerr; break }
+						// after folder, increment processed by summed size of its contents
+						filepath.Walk(p, func(sp string, info os.FileInfo, e error) error {
+							if e!=nil || info==nil || info.IsDir() { return nil }
+							low := strings.ToLower(sp)
+							if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { return nil }
+							processed += info.Size(); return nil
+						})
+					} else {
+						outArchive := s.defaultOutputPathForEncrypt(p)
+						cerr := s.encryptDirectory(p, outArchive, finalPassword, func(done,total int64){ if grandTotal>0 { onProgress(processed+done/2, grandTotal) } })
+						if cerr != nil { encErr = cerr; break }
+						// After archive encryption, approximate processed as full folder content size
+						filepath.Walk(p, func(sp string, info os.FileInfo, e error) error {
+							if e!=nil || info==nil || info.IsDir() { return nil }
+							low := strings.ToLower(sp)
+							if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { return nil }
+							processed += info.Size(); return nil
+						})
+					}
+					// history entry folder
+					s.config.AddHistoryEntry(config.HistoryEntry{FileName: base, Operation:"encrypt-folder", Size: fi.Size(), Timestamp: time.Now().Unix(), Result: "success"})
+					if s.deleteAfter { os.RemoveAll(p) }
+				} else if fi.Mode().IsRegular() {
+					out := s.defaultOutputPathForEncrypt(p)
+					cerr := cryptoengine.EncryptFileWithMode(p, out, finalPassword, s.encryptionMode, func(done,total int64){ if grandTotal>0 { onProgress(processed+done, grandTotal) } })
+					if cerr != nil { encErr = cerr; break }
+					processed += fi.Size()
+					s.config.AddHistoryEntry(config.HistoryEntry{FileName: base, Operation:"encrypt", Size: fi.Size(), Timestamp: time.Now().Unix(), Result: "success"})
+					if s.deleteAfter { os.Remove(p) }
+				}
+				if onProgress != nil { onProgress(processed, grandTotal) }
 			}
+			elapsed := time.Since(start).Round(time.Millisecond)
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted %d item(s) in %s", len(s.selectedPaths), elapsed)) }) }
+		} else if singleInfo != nil && singleInfo.IsDir() {
+			if s.recursiveMode { encErr = s.encryptDirectoryRecursive(s.selectedPath, finalPassword, onProgress) } else { encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress) }
+			elapsed := time.Since(start).Round(time.Millisecond)
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted folder in %s", elapsed)) }) }
 		} else {
 			encErr = cryptoengine.EncryptFileWithMode(s.selectedPath, outputPath, finalPassword, s.encryptionMode, onProgress)
+			elapsed := time.Since(start).Round(time.Millisecond)
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted %s in %s", filepath.Base(s.selectedPath), elapsed)) }) }
+			// single file history
+			s.config.AddHistoryEntry(config.HistoryEntry{FileName: filepath.Base(s.selectedPath), Operation:"encrypt", Size: singleInfo.Size(), Timestamp: time.Now().Unix(), Result: "success"})
+			if s.deleteAfter { os.Remove(s.selectedPath) }
 		}
 
-        elapsed := time.Since(start).Round(time.Millisecond)
-		
-		// Add to history
-		historyEntry := config.HistoryEntry{
-			FileName:  filepath.Base(s.selectedPath),
-			Operation: "encrypt",
-			Size:      info.Size(),
-			Timestamp: time.Now().Unix(),
-		}
-
-		fyne.Do(func() {
-			if encErr != nil {
-				historyEntry.Result = "error"
-				historyEntry.Error = encErr.Error()
-				s.statusLabel.SetText("Error: " + encErr.Error())
-				dialog.ShowError(encErr, w)
-			} else {
-				historyEntry.Result = "success"
-				statusMsg := fmt.Sprintf("✅ Encrypted to %s in %s", filepath.Base(outputPath), elapsed)
-				
-				// Delete source file if option is enabled
-				if s.deleteAfter {
-					if deleteErr := os.RemoveAll(s.selectedPath); deleteErr != nil {
-						statusMsg += " (Warning: Could not delete source)"
-					} else {
-						statusMsg += " (Source deleted)"
-					}
-				}
-				
-				s.statusLabel.SetText(statusMsg)
-			}
-		})
-
-		s.config.AddHistoryEntry(historyEntry)
+		// Save config/history at end
 		s.config.Save()
+
+		// (legacy per-file final status removed; handled inline per branch)
 	}()
 }
 
 func (s *AppState) doDecrypt(w fyne.Window) {
 	s.cancelRequested.Store(false)
-	if s.selectedPath == "" {
-        dialog.ShowInformation("Select file", "Please select a file to decrypt.", w)
-        return
-    }
+	if s.selectedPath == "" && len(s.selectedPaths) == 0 {
+		dialog.ShowInformation("Select input", "Please select a file, folder, or multiple encrypted items to decrypt.", w)
+		return
+	}
 	if s.password == "" {
         dialog.ShowInformation("Password required", "Please enter a password.", w)
         return
     }
 
-	outputPath := s.defaultOutputPathForDecrypt(s.selectedPath)
+	outputPath := ""
+	if s.selectedPath != "" { outputPath = s.defaultOutputPathForDecrypt(s.selectedPath) }
 
 	s.statusLabel.SetText("Decrypting…")
 	s.progressBar.SetValue(0)
 
 	go func() {
-		// If selectedPath is a directory: decrypt all encrypted files inside.
-		if info, err := os.Stat(s.selectedPath); err == nil && info.IsDir() {
+		// Batch multi-selection path
+		if len(s.selectedPaths) > 0 {
+			finalPassword := []byte(s.password)
+			if s.keyfileManager.HasKeyfiles() { finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password)) }
+			// Collect targets (files or directories)
+			var targets []string
+			for _, p := range s.selectedPaths { targets = append(targets, p) }
+			// Pre-compute total bytes (approx): for encrypted dirs (user selected) we'll walk inside
+			var totalBytes int64
+			for _, t := range targets {
+				fi, err := os.Stat(t); if err != nil { continue }
+				if fi.IsDir() {
+					filepath.Walk(t, func(sp string, info os.FileInfo, e error) error {
+						if e!=nil || info==nil || info.IsDir() { return nil }
+						low:=strings.ToLower(sp)
+						if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { totalBytes += info.Size() }
+						return nil
+					})
+				} else if fi.Mode().IsRegular() { totalBytes += fi.Size() }
+			}
+			var processed int64
+			start := time.Now()
+			for idx, t := range targets {
+				if s.cancelRequested.Load() { break }
+				fi, err := os.Stat(t); if err != nil { continue }
+				base := filepath.Base(t)
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("Decrypting %d/%d: %s", idx+1, len(targets), base)) })
+				if fi.IsDir() {
+					// Decrypt all encrypted files inside directory recursively
+					dErr := s.decryptDirectoryRecursive(t, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } })
+					// After finishing dir, increment processed by sizes of encrypted files within
+					filepath.Walk(t, func(sp string, info os.FileInfo, e error) error {
+						if e!=nil || info==nil || info.IsDir() { return nil }
+						low:=strings.ToLower(sp)
+						if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { processed += info.Size() }
+						return nil })
+					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); break }
+				} else {
+					out := s.defaultOutputPathForDecrypt(t)
+					var dErr error
+					if s.isHadesCryptFile(t) { dErr = s.decryptFileAuto(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } })
+					} else if s.isGnuPGFile(t) { dErr = cryptoengine.DecryptFileWithGnuPG(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } })
+					} else { dErr = cryptoengine.DecryptFile(t, out, finalPassword, s.forceDecrypt, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } }) }
+					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); break }
+					processed += fi.Size()
+				}
+				fyne.Do(func(){ if totalBytes>0 { s.progressBar.SetValue(float64(processed)/float64(totalBytes)) } })
+				if s.deleteAfter { os.RemoveAll(t) }
+			}
+			if !s.cancelRequested.Load() {
+				elapsed := time.Since(start).Round(time.Millisecond)
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Decrypted %d item(s) in %s", len(targets), elapsed)) })
+			} else { fyne.Do(func(){ s.statusLabel.SetText("Canceled") }) }
+			return
+		}
+		// If single selectedPath is a directory: decrypt all encrypted files inside.
+		if s.selectedPath != "" { if info, err := os.Stat(s.selectedPath); err == nil && info.IsDir() {
 			start := time.Now()
 			finalPassword := []byte(s.password)
 			if s.keyfileManager.HasKeyfiles() { finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password)) }
@@ -695,7 +820,7 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 				if err != nil { s.statusLabel.SetText("Error: "+err.Error()) } else { s.statusLabel.SetText(fmt.Sprintf("✅ Folder decrypted in %s", elapsed)) }
 			})
 			return
-		}
+		} }
 		onProgress := func(done, total int64) {
 			fyne.Do(func() {
 				if total <= 0 {
@@ -777,11 +902,10 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 func (s *AppState) encryptDirectory(inputDir, outputPath string, password []byte, onProgress cryptoengine.ProgressCallback) error {
 	// Create temporary tar.gz file
 	tempArchive := outputPath + ".temp.tar.gz"
-	defer os.Remove(tempArchive) // Clean up temp file
+	defer os.Remove(tempArchive)
 
-	// Create tar.gz archive
+	// Phase 1: create archive (0-50%)
 	err := archiver.CreateTarGz(inputDir, tempArchive, func(processed, total int64) {
-		// Report progress for archiving phase (0-50%)
 		if onProgress != nil && total > 0 {
 			progress := float64(processed) / float64(total) * 0.5
 			onProgress(int64(progress*float64(total)), total)
@@ -793,19 +917,17 @@ func (s *AppState) encryptDirectory(inputDir, outputPath string, password []byte
 
 	// Compute SHA-256 of plaintext archive for integrity metadata
 	archiveHash := ""
-	{
-		f, herr := os.Open(tempArchive)
-		if herr == nil {
+	if f, herr := os.Open(tempArchive); herr == nil {
+		func() {
 			defer f.Close()
 			h := sha256.New()
 			io.Copy(h, f)
 			archiveHash = hex.EncodeToString(h.Sum(nil))
-		}
+		}()
 	}
 
-	// Encrypt the archive
+	// Phase 2: encrypt archive (50-100%)
 	err = cryptoengine.EncryptFile(tempArchive, outputPath, password, func(processed, total int64) {
-		// Report progress for encryption phase (50-100%)
 		if onProgress != nil && total > 0 {
 			progress := 0.5 + (float64(processed)/float64(total))*0.5
 			onProgress(int64(progress*float64(total)), total)
@@ -815,18 +937,17 @@ func (s *AppState) encryptDirectory(inputDir, outputPath string, password []byte
 		return fmt.Errorf("encrypt archive: %w", err)
 	}
 
-    // Sidecar metadata to help future detection (.meta JSON)
-    metaPath := outputPath + ".meta"
-    // Count files & sum size
-    var fileCount int
-    var totalBytes int64
-    filepath.Walk(inputDir, func(p string, info os.FileInfo, err error) error {
-        if err != nil { return nil }
-        if info != nil && !info.IsDir() { fileCount++; totalBytes += info.Size() }
-        return nil
-    })
+	// Sidecar metadata (.meta JSON)
+	metaPath := outputPath + ".meta"
+	var fileCount int
+	var totalBytes int64
+	filepath.Walk(inputDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil { return nil }
+		if info != nil && !info.IsDir() { fileCount++; totalBytes += info.Size() }
+		return nil
+	})
 	metaJSON := fmt.Sprintf("{\n  \"type\": \"archive-folder\",\n  \"original_folder\": %q,\n  \"file_count\": %d,\n  \"total_size\": %d,\n  \"archive_sha256\": %q\n}", filepath.Base(inputDir), fileCount, totalBytes, archiveHash)
-    os.WriteFile(metaPath, []byte(metaJSON), 0600)
+	os.WriteFile(metaPath, []byte(metaJSON), 0600)
 
 	return nil
 }
