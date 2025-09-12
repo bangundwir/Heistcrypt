@@ -70,6 +70,58 @@ type AppState struct {
 	compressFiles    bool
 	deniabilityMode  bool
 	recursiveMode    bool
+
+	// UX enhancements
+	progressLastTime time.Time
+	progressLastVal  float64
+
+	opSummary        *OperationSummary
+}
+
+// OperationSummary captures metrics of a completed operation batch
+type OperationSummary struct {
+	Operation      string
+	Start          time.Time
+	End            time.Time
+	Files          int
+	Folders        int
+	TotalBytes     int64
+	Errors         int
+	Canceled       bool
+	FirstError     string
+}
+
+func (s *AppState) startOpSummary(op string) { s.opSummary = &OperationSummary{Operation: op, Start: time.Now()} }
+func (s *AppState) addFile(size int64) { if s.opSummary!=nil { s.opSummary.Files++; s.opSummary.TotalBytes += size } }
+func (s *AppState) addFolder(size int64) { if s.opSummary!=nil { s.opSummary.Folders++; s.opSummary.TotalBytes += size } }
+func (s *AppState) noteError(err error) { if s.opSummary!=nil { s.opSummary.Errors++; if s.opSummary.FirstError=="" && err!=nil { s.opSummary.FirstError = err.Error() } } }
+func (s *AppState) markCanceled() { if s.opSummary!=nil { s.opSummary.Canceled = true } }
+func (s *AppState) finishSummary() *OperationSummary { if s.opSummary!=nil { s.opSummary.End = time.Now(); return s.opSummary }; return nil }
+
+// Throttled progress update to reduce UI churn
+func (s *AppState) setProgressFraction(f float64) {
+	if f < 0 { f = 0 }; if f > 1 { f = 1 }
+	now := time.Now()
+	if now.Sub(s.progressLastTime) < 40*time.Millisecond && (f - s.progressLastVal) < 0.02 && (s.progressLastVal - f) < 0.02 {
+		return
+	}
+	s.progressLastTime = now
+	s.progressLastVal = f
+	s.progressBar.SetValue(f)
+}
+
+// Show modal summary dialog
+func (s *AppState) showSummaryDialog(w fyne.Window, sum *OperationSummary) {
+	if sum == nil { return }
+	dur := sum.End.Sub(sum.Start)
+	speed := "-"
+	if dur > 0 && sum.TotalBytes > 0 { speed = fmt.Sprintf("%s/s", uiutil.HumanBytes(int64(float64(sum.TotalBytes)/dur.Seconds()))) }
+	status := "✅ Success"
+	if sum.Canceled { status = "⚠️ Canceled" }
+	if sum.Errors > 0 { status = "❌ Partial" }
+	content := widget.NewLabel(fmt.Sprintf("%s\nOperation: %s\nFiles: %d  Folders: %d\nData: %s\nDuration: %s\nThroughput: %s\nErrors: %d", status, sum.Operation, sum.Files, sum.Folders, uiutil.HumanBytes(sum.TotalBytes), dur.Round(time.Millisecond), speed, sum.Errors))
+	if sum.FirstError != "" { content.SetText(content.Text + "\nFirst error: " + sum.FirstError) }
+	dialog.ShowCustom("Summary", "Close", content, w)
 }
 
 // computeMixedSelectionSize walks selectedPaths computing total bytes that will be processed.
@@ -649,17 +701,18 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 	}
 
 	s.statusLabel.SetText("Encrypting…")
-	s.progressBar.SetValue(0)
+	s.setProgressFraction(0)
 
     go func() {
+        s.startOpSummary("encrypt")
 		onProgress := func(done, total int64) {
 			fyne.Do(func() {
 				if s.cancelRequested.Load() { return }
-				if total <= 0 {
-					s.progressBar.SetValue(0)
+					if total <= 0 {
+						s.setProgressFraction(0)
                 return
             }
-				s.progressBar.SetValue(float64(done) / float64(total))
+					s.setProgressFraction(float64(done) / float64(total))
 			})
         }
 
@@ -704,6 +757,7 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 					// history entry folder
 					s.config.AddHistoryEntry(config.HistoryEntry{FileName: base, Operation:"encrypt-folder", Size: fi.Size(), Timestamp: time.Now().Unix(), Result: "success"})
 					if s.deleteAfter { os.RemoveAll(p) }
+					s.addFolder(0)
 				} else if fi.Mode().IsRegular() {
 					out := s.defaultOutputPathForEncrypt(p)
 					cerr := cryptoengine.EncryptFileWithMode(p, out, finalPassword, s.encryptionMode, func(done,total int64){ if grandTotal>0 { onProgress(processed+done, grandTotal) } })
@@ -711,6 +765,7 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 					processed += fi.Size()
 					s.config.AddHistoryEntry(config.HistoryEntry{FileName: base, Operation:"encrypt", Size: fi.Size(), Timestamp: time.Now().Unix(), Result: "success"})
 					if s.deleteAfter { os.Remove(p) }
+					s.addFile(fi.Size())
 				}
 				if onProgress != nil { onProgress(processed, grandTotal) }
 			}
@@ -719,11 +774,11 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 		} else if singleInfo != nil && singleInfo.IsDir() {
 			if s.recursiveMode { encErr = s.encryptDirectoryRecursive(s.selectedPath, finalPassword, onProgress) } else { encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress) }
 			elapsed := time.Since(start).Round(time.Millisecond)
-			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted folder in %s", elapsed)) }) }
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted folder in %s", elapsed)) }); s.addFolder(0) }
 		} else {
 			encErr = cryptoengine.EncryptFileWithMode(s.selectedPath, outputPath, finalPassword, s.encryptionMode, onProgress)
 			elapsed := time.Since(start).Round(time.Millisecond)
-			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted %s in %s", filepath.Base(s.selectedPath), elapsed)) }) }
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted %s in %s", filepath.Base(s.selectedPath), elapsed)) }); if singleInfo!=nil { s.addFile(singleInfo.Size()) } }
 			// single file history
 			s.config.AddHistoryEntry(config.HistoryEntry{FileName: filepath.Base(s.selectedPath), Operation:"encrypt", Size: singleInfo.Size(), Timestamp: time.Now().Unix(), Result: "success"})
 			if s.deleteAfter { os.Remove(s.selectedPath) }
@@ -731,6 +786,10 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 
 		// Save config/history at end
 		s.config.Save()
+		if encErr != nil { s.noteError(encErr) }
+		if s.cancelRequested.Load() { s.markCanceled() }
+		sum := s.finishSummary()
+		fyne.Do(func(){ if sum!=nil { s.showSummaryDialog(w,sum) } })
 
 		// (legacy per-file final status removed; handled inline per branch)
 	}()
@@ -751,9 +810,10 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 	if s.selectedPath != "" { outputPath = s.defaultOutputPathForDecrypt(s.selectedPath) }
 
 	s.statusLabel.SetText("Decrypting…")
-	s.progressBar.SetValue(0)
+	s.setProgressFraction(0)
 
 	go func() {
+		s.startOpSummary("decrypt")
 		// Batch multi-selection path
 		if len(s.selectedPaths) > 0 {
 			finalPassword := []byte(s.password)
@@ -783,30 +843,32 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("Decrypting %d/%d: %s", idx+1, len(targets), base)) })
 				if fi.IsDir() {
 					// Decrypt all encrypted files inside directory recursively
-					dErr := s.decryptDirectoryRecursive(t, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } })
+					dErr := s.decryptDirectoryRecursive(t, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } })
 					// After finishing dir, increment processed by sizes of encrypted files within
 					filepath.Walk(t, func(sp string, info os.FileInfo, e error) error {
 						if e!=nil || info==nil || info.IsDir() { return nil }
 						low:=strings.ToLower(sp)
 						if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { processed += info.Size() }
 						return nil })
-					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); break }
+					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); s.noteError(dErr); break } else { s.addFolder(0) }
 				} else {
 					out := s.defaultOutputPathForDecrypt(t)
 					var dErr error
-					if s.isHadesCryptFile(t) { dErr = s.decryptFileAuto(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } })
-					} else if s.isGnuPGFile(t) { dErr = cryptoengine.DecryptFileWithGnuPG(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } })
-					} else { dErr = cryptoengine.DecryptFile(t, out, finalPassword, s.forceDecrypt, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.progressBar.SetValue(float64(processed+done)/float64(totalBytes)) }) } }) }
-					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); break }
+					if s.isHadesCryptFile(t) { dErr = s.decryptFileAuto(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } })
+					} else if s.isGnuPGFile(t) { dErr = cryptoengine.DecryptFileWithGnuPG(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } })
+					} else { dErr = cryptoengine.DecryptFile(t, out, finalPassword, s.forceDecrypt, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } }) }
+					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); s.noteError(dErr); break } else { s.addFile(fi.Size()) }
 					processed += fi.Size()
 				}
-				fyne.Do(func(){ if totalBytes>0 { s.progressBar.SetValue(float64(processed)/float64(totalBytes)) } })
+				fyne.Do(func(){ if totalBytes>0 { s.setProgressFraction(float64(processed)/float64(totalBytes)) } })
 				if s.deleteAfter { os.RemoveAll(t) }
 			}
+			if s.cancelRequested.Load() { s.markCanceled() }
 			if !s.cancelRequested.Load() {
 				elapsed := time.Since(start).Round(time.Millisecond)
 				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Decrypted %d item(s) in %s", len(targets), elapsed)) })
 			} else { fyne.Do(func(){ s.statusLabel.SetText("Canceled") }) }
+			sum := s.finishSummary(); fyne.Do(func(){ if sum!=nil { s.showSummaryDialog(w,sum) } })
 			return
 		}
 		// If single selectedPath is a directory: decrypt all encrypted files inside.
@@ -814,20 +876,21 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 			start := time.Now()
 			finalPassword := []byte(s.password)
 			if s.keyfileManager.HasKeyfiles() { finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password)) }
-			err := s.decryptDirectoryRecursive(s.selectedPath, finalPassword, func(done,total int64){ fyne.Do(func(){ if total>0 { s.progressBar.SetValue(float64(done)/float64(total)) } }) })
+			err := s.decryptDirectoryRecursive(s.selectedPath, finalPassword, func(done,total int64){ fyne.Do(func(){ if total>0 { s.setProgressFraction(float64(done)/float64(total)) } }) })
 			elapsed := time.Since(start).Round(time.Millisecond)
 			fyne.Do(func(){
-				if err != nil { s.statusLabel.SetText("Error: "+err.Error()) } else { s.statusLabel.SetText(fmt.Sprintf("✅ Folder decrypted in %s", elapsed)) }
+				if err != nil { s.statusLabel.SetText("Error: "+err.Error()); s.noteError(err) } else { s.statusLabel.SetText(fmt.Sprintf("✅ Folder decrypted in %s", elapsed)); s.addFolder(0) }
 			})
+			sum := s.finishSummary(); fyne.Do(func(){ if sum!=nil { s.showSummaryDialog(w,sum) } })
 			return
 		} }
 		onProgress := func(done, total int64) {
 			fyne.Do(func() {
 				if total <= 0 {
-					s.progressBar.SetValue(0)
+					s.setProgressFraction(0)
                 return
             }
-				s.progressBar.SetValue(float64(done) / float64(total))
+				s.setProgressFraction(float64(done) / float64(total))
 			})
         }
 
@@ -869,30 +932,16 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 
 		fyne.Do(func() {
 			if err != nil {
-				if strings.Contains(err.Error(), "canceled") {
-					s.statusLabel.SetText("Canceled")
-					return
-				}
-				historyEntry.Result = "error"
-				historyEntry.Error = err.Error()
-				s.statusLabel.SetText("Error: " + err.Error())
-            dialog.ShowError(err, w)
+				if strings.Contains(err.Error(), "canceled") { s.statusLabel.SetText("Canceled"); s.markCanceled(); return }
+				historyEntry.Result = "error"; historyEntry.Error = err.Error(); s.statusLabel.SetText("Error: "+err.Error()); s.noteError(err); dialog.ShowError(err, w)
 			} else {
-				historyEntry.Result = "success"
-				statusMsg := fmt.Sprintf("✅ Decrypted to %s in %s", filepath.Base(outputPath), elapsed)
-				
-				// Delete source file if option is enabled
-				if s.deleteAfter {
-					if deleteErr := os.Remove(s.selectedPath); deleteErr != nil {
-						statusMsg += " (Warning: Could not delete source)"
-					} else {
-						statusMsg += " (Source deleted)"
-					}
-				}
-				
-				s.statusLabel.SetText(statusMsg)
+				historyEntry.Result = "success"; statusMsg := fmt.Sprintf("✅ Decrypted to %s in %s", filepath.Base(outputPath), elapsed)
+				if s.deleteAfter { if deleteErr := os.Remove(s.selectedPath); deleteErr != nil { statusMsg += " (Warning: Could not delete source)" } else { statusMsg += " (Source deleted)" } }
+				s.statusLabel.SetText(statusMsg); if fileSize>0 { s.addFile(fileSize) }
 			}
 		})
+		if err != nil { s.noteError(err) }
+		sum := s.finishSummary(); fyne.Do(func(){ if sum!=nil { s.showSummaryDialog(w,sum) } })
 
 		s.config.AddHistoryEntry(historyEntry)
 		s.config.Save()
