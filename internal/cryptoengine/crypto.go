@@ -437,9 +437,15 @@ func DecryptFile(inputPath, outputPath string, password []byte, force bool, onPr
         if pqCipher != nil {
             // Post-quantum: nonce + plaintext + auth tag (32 bytes)
             nonceSize := pqCipher.GetNonceSize()
-            authTagSize := 32 // SHA-256 tag size from postquantum implementation
+            authTagSize := 32 // From postquantum implementation
             need = nPlain + nonceSize + authTagSize
+        } else if mode == ModeParanoid {
+            // Two AEAD layers: inner AES-GCM + outer ChaCha20-Poly1305 (each adds its tag)
+            // We used aead.Seal(), then aead2.Seal() during encryption.
+            // So ciphertext = plaintext + gcmOverhead + chachaOverhead (both 16 bytes)
+            need = nPlain + gcmOverhead*2
         } else {
+            // Single AEAD layer (GCM or Chacha20)
             need = nPlain + gcmOverhead
         }
         buf := make([]byte, need)

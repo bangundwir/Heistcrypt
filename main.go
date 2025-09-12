@@ -160,7 +160,11 @@ func main() {
 			version = "dev"
 		}
 	}
-    application := app.NewWithID("hadescrypt")
+	application := app.NewWithID("hadescrypt")
+	// Initialize preferences to avoid EOF warning when the file is first created empty.
+	if application.Preferences().String("_init") == "" {
+		application.Preferences().SetString("_init", version)
+	}
 	
 	// Load configuration
 	cfg, err := config.Load()
@@ -772,9 +776,17 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 			elapsed := time.Since(start).Round(time.Millisecond)
 			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ %d items encrypted (%s)", len(s.selectedPaths), elapsed)) }) }
 		} else if singleInfo != nil && singleInfo.IsDir() {
+			// Single folder encryption path (not multi-selection)
 			if s.recursiveMode { encErr = s.encryptDirectoryRecursive(s.selectedPath, finalPassword, onProgress) } else { encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress) }
 			elapsed := time.Since(start).Round(time.Millisecond)
-			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Folder encrypted (%s)", elapsed)) }); s.addFolder(0) }
+			if encErr == nil {
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Folder encrypted (%s)", elapsed)) })
+				// Add history entry for folder
+				s.config.AddHistoryEntry(config.HistoryEntry{FileName: filepath.Base(s.selectedPath), Operation:"encrypt-folder", Size: 0, Timestamp: time.Now().Unix(), Result: "success"})
+				// Delete original folder if user selected deleteAfter
+				if s.deleteAfter { os.RemoveAll(s.selectedPath) }
+				s.addFolder(0)
+			}
 		} else {
 			encErr = cryptoengine.EncryptFileWithMode(s.selectedPath, outputPath, finalPassword, s.encryptionMode, onProgress)
 			elapsed := time.Since(start).Round(time.Millisecond)
