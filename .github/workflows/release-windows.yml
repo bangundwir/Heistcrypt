@@ -43,15 +43,48 @@ jobs:
             base-devel
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-gcc
+            mingw-w64-ucrt-x86_64-toolchain
 
-      - name: Verify GCC
+      - name: Locate C compiler (MSYS2)
         shell: pwsh
         run: |
-          if (Test-Path 'C:\msys64\mingw64\bin\gcc.exe') {
-            & 'C:\msys64\mingw64\bin\gcc.exe' --version | Select-Object -First 1 | Write-Host
-          } else {
-            Write-Error 'gcc not found at C:\\msys64\\mingw64\\bin\\gcc.exe'; Get-ChildItem -Recurse C:\msys64 -Filter gcc.exe -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host $_.FullName }
+          $candidates = @(
+            'C:\msys64\mingw64\bin\gcc.exe',
+            'C:\msys64\ucrt64\bin\gcc.exe',
+            'C:\msys64\clang64\bin\clang.exe'
+          )
+          $found = $null
+          foreach ($p in $candidates) { if (Test-Path $p) { $found = $p; break } }
+          if (-not $found) {
+            $cmd = (Get-Command gcc -ErrorAction SilentlyContinue)
+            if ($cmd) { $found = $cmd.Source }
           }
+          if ($found) {
+            Write-Host "Found C compiler at: $found"
+            "CC_PATH=$found" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            $dir = [System.IO.Path]::GetDirectoryName($found)
+            "CC_BINDIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            Write-Host 'No MSYS2 gcc/clang found yet; will try Chocolatey fallback.'
+          }
+
+      - name: Fallback install MinGW via Chocolatey
+        if: env.CC_PATH == ''
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+          $mingw = 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin\gcc.exe'
+          if (Test-Path $mingw) {
+            "CC_PATH=$mingw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "CC_BINDIR=$(Split-Path $mingw)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: Verify compiler selection
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CC_PATH)) { Write-Error 'No C compiler available after MSYS2 and Chocolatey attempts.' }
+          Write-Host "Using CC: $env:CC_PATH"
+          & $env:CC_PATH --version | Select-Object -First 1 | Write-Host
 
       - name: Derive Version
         id: version
@@ -91,11 +124,11 @@ jobs:
         shell: pwsh
         env:
           CGO_ENABLED: '1'
-          CC: C:\msys64\mingw64\bin\gcc.exe
+          CC: ${{ env.CC_PATH }}
           GOOS: windows
           GOARCH: amd64
         run: |
-          $env:Path = 'C:\msys64\mingw64\bin;' + $env:Path
+          if (-not [string]::IsNullOrWhiteSpace($env:CC_BINDIR)) { $env:Path = "$env:CC_BINDIR;" + $env:Path } else { $env:Path = 'C:\msys64\mingw64\bin;' + $env:Path }
           go env
           New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
           $ld = "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.version }}"
