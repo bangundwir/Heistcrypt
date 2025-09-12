@@ -15,10 +15,12 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       GO_VERSION: '1.22'
       APP_NAME: HadesCrypt
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,46 +35,49 @@ jobs:
 
       - name: Derive Version
         id: version
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            V="${{ github.event.inputs.version }}"
-          else
-            # Strip leading v if tag like v2.0.3
-            RAW_TAG="${GITHUB_REF_NAME}"
-            V="${RAW_TAG#v}"
-          fi
-          echo "$V" > VERSION
-          echo "version=$V" >> $GITHUB_OUTPUT
-          echo "Detected version: $V"
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and '${{ github.event.inputs.version }}' -ne '') {
+            $V='${{ github.event.inputs.version }}'
+          } else {
+            $V=$env:GITHUB_REF_NAME -replace '^v',''
+          }
+          Set-Content VERSION $V
+          "version=$V" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Detected version: $V"
 
       - name: Verify Version File
-        run: type VERSION
+        shell: pwsh
+        run: Get-Content VERSION | Write-Host
 
       - name: Build Windows x64
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p dist/windows
+          New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
           go mod download
-          go build -ldflags "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.version }}" -o dist/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe .
+          $ld = "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.version }}"
+          $out = "dist\windows\${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe"
+          go build -ldflags $ld -o $out .
+          if (!(Test-Path $out)) { Write-Error 'Build failed'; exit 1 }
 
       - name: Generate SHA256
-        shell: bash
+        shell: pwsh
         run: |
-          cd dist/windows
-          for f in *.exe; do
-            sha256sum "$f" > "$f.sha256" || shasum -a 256 "$f" > "$f.sha256" || certutil -hashfile "$f" SHA256 > "$f.sha256.txt" 2>nul || true
-          done
+          Get-ChildItem dist\windows -Filter *.exe | ForEach-Object {
+            $hash=(Get-FileHash -Algorithm SHA256 $_.FullName).Hash
+            "$($_.Name)  $hash" | Out-File ($_.FullName + '.sha256') -Encoding ascii
+          }
 
       - name: Prepare Portable Package
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p dist/package
-          cp README.md CHANGELOG.md || true
-          cp dist/windows/*.exe dist/package/
-          echo "Files:" > dist/package/FILES.txt
-          ls -1 dist/package >> dist/package/FILES.txt
-          ( cd dist/package && zip -r ../${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-portable.zip . )
+          New-Item -ItemType Directory -Force -Path dist\package | Out-Null
+          if (Test-Path README.md) { Copy-Item README.md dist\package\ }
+          if (Test-Path CHANGELOG.md) { Copy-Item CHANGELOG.md dist\package\ }
+          Copy-Item dist\windows\*.exe dist\package\
+          'Files:' | Out-File dist\package\FILES.txt -Encoding ascii
+          (Get-ChildItem dist\package | Select-Object -ExpandProperty Name) | Out-File dist\package\FILES.txt -Append -Encoding ascii
+          Compress-Archive -Path dist\package\* -DestinationPath dist\${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-portable.zip -Force
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
@@ -103,17 +108,16 @@ jobs:
     needs: build-windows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-build-${{ needs.build-windows.outputs.version || 'manual' }}
+          name: windows-build-${{ needs.build-windows.outputs.version }}
           path: dist
       - name: Create Release (manual dispatch)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: HadesCrypt v${{ github.event.inputs.version }} (Windows)
+          tag_name: v${{ needs.build-windows.outputs.version }}
+          name: HadesCrypt v${{ needs.build-windows.outputs.version }} (Windows)
           draft: false
           prerelease: false
           files: |
