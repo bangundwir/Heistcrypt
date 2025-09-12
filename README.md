@@ -47,8 +47,8 @@ go build -o HadesCrypt.exe
 ### Basic Usage
 1. **Launch HadesCrypt**
 2. **Select a file or folder**:
-   - Drag and drop files/folders onto the interface, or
-   - Click "Select File" button
+  - Drag and drop files/folders onto the interface, or
+  - Click "Select File" or "Select Folder" button
 3. **Enter a password** or click "Generate" for a secure password
 4. **Choose operation**:
    - Click "🔒 Encrypt" to encrypt the selected item
@@ -68,7 +68,7 @@ Click "Advanced Options ▼" to access additional features:
 ## File Formats
 
 ### Encrypted Files
-- **Extension**: `.hadescrypt`
+- **Extensions**: `.hadescrypt` (primary), `.heistcrypt` (alternate recognized)
 - **Format**: Custom binary format with header containing metadata
 - **Structure**:
   ```
@@ -82,9 +82,22 @@ Click "Advanced Options ▼" to access additional features:
   ```
 
 ### Encrypted Folders
-- Folders are compressed into tar.gz archives before encryption
-- The archive is then encrypted using the same format as files
-- Decryption automatically detects and extracts archives
+Two modes are supported:
+
+1. Archive Mode (default):
+  - The folder is first packed into a `tar.gz` archive
+  - The single archive is encrypted producing `<folder>.hadescrypt` (or `.gpg`)
+  - Decryption automatically restores the full folder structure (auto-extract)
+  - Useful for preserving exact structure as one file
+
+2. Recursive Mode (enable in Advanced Options):
+  - Each file inside the folder (recursively) is encrypted individually
+  - Original extension + `.hadescrypt` (or `.gpg`) is created beside each file
+  - Original files can optionally be deleted if the delete option is checked
+  - Already encrypted files (`.hadescrypt`, `.gpg`) are skipped automatically
+  - Decryption of a selected folder now automatically finds and decrypts all encrypted files inside (no need to select each one)
+
+Choose the mode based on distribution and update workflow (per-file allows incremental updates; archive simplifies sharing).
 
 ## Configuration
 

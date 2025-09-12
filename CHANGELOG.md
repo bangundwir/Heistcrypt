@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0] - 2025-09-10
 
+## [2.0.1] - 2025-09-12
+
+### 🔐 Added
+- **Archive Integrity Hash**: SHA-256 of plaintext tar.gz stored in sidecar `.meta` (`archive_sha256`).
+- **Automatic Hash Verification**: Decryption now verifies archive SHA-256 before extraction; aborts on mismatch.
+- **Sidecar Metadata Expansion**: Added file count, total size, original folder name, and hash for archive-mode folder encryption.
+- **Alternate Extension Support**: Added recognition for `.heistcrypt` alongside `.hadescrypt`.
+- **Status Feedback**: Clear UI messages for hash verification success/failure ("Hash verified OK" / mismatch error).
+- **Cancel Operation**: User can cancel long-running (recursive / archive) operations cleanly.
+
+### 🔄 Changed
+- **Archive Detection Logic**: Switched from file-extension based check to magic-byte (gzip + tar header) detection for reliability.
+- **Decryption Flow**: Unified smart auto-detection path that decrypts to temp, inspects content, then either extracts (folder) or outputs file.
+
+### 🛠 Fixed
+- **False Folder Classification**: Resolved cases where decrypted archives were misidentified, producing flat files instead of folders.
+- **GZIP Header Errors**: Eliminated "gzip: invalid header" errors by deferring archive detection until after decryption.
+- **Meta Cleanup**: Sidecar `.meta` now removed only after successful hash verification and extraction.
+- **Size Integrity Check**: Added original-size validation for non-archive files to detect partial/corrupted decrypts.
+
+### 🔒 Security
+- **Strengthened Integrity Guarantees**: Hash verification ensures tampering or corruption is caught before extraction.
+
+### 📂 Folder Handling Improvements
+- **Recursive vs Archive Modes**: Clear separation; archive mode bundles folder → single encrypted file with integrity metadata.
+- **Robust File/Folder Differentiation**: Output type (file vs directory) now matches original with high accuracy.
+
+---
+
 ### 🚀 Major Features Added
 
 #### Post-Quantum Cryptography

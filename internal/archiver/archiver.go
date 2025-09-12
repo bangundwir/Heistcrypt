@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"bytes"
 )
 
 // ProgressCallback reports processed and total bytes during archiving
@@ -204,6 +204,24 @@ func calculateDirSize(dirPath string) (int64, error) {
 
 // IsArchive checks if a file is a tar.gz archive based on its extension
 func IsArchive(filename string) bool {
-	lower := strings.ToLower(filename)
-	return strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz")
+	f, err := os.Open(filename)
+	if err != nil { return false }
+	defer f.Close()
+	// Read first few bytes for gzip magic 1F 8B
+	hdr := make([]byte, 3)
+	if _, err := io.ReadFull(f, hdr); err != nil { return false }
+	if hdr[0] != 0x1F || hdr[1] != 0x8B { return false }
+	// Reset and try to create gzip reader
+	f.Seek(0,0)
+	gz, err := gzip.NewReader(f)
+	if err != nil { return false }
+	defer gz.Close()
+	// Read first tar header block (512 bytes)
+	block := make([]byte, 512)
+	if _, err := io.ReadFull(gz, block); err != nil { return false }
+	// Basic heuristic: tar header contains a null-terminated name and ustar or gnu signature optionally
+	if bytes.Contains(block, []byte("ustar")) || bytes.IndexByte(block, 0) > 0 {
+		return true
+	}
+	return false
 }

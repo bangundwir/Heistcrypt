@@ -1,9 +1,11 @@
 package main
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
     "strings"
     "time"
@@ -15,6 +17,9 @@ import (
     "fyne.io/fyne/v2/theme"
     "fyne.io/fyne/v2/widget"
 
+	"io"
+	"encoding/binary"
+	"sync/atomic"
 	"github.com/bangundwir/HadesCrypt/internal/archiver"
 	"github.com/bangundwir/HadesCrypt/internal/config"
 	"github.com/bangundwir/HadesCrypt/internal/cryptoengine"
@@ -54,6 +59,7 @@ type AppState struct {
 	// Advanced options
 	deleteAfter      bool
 	useKeyfiles      bool
+	cancelRequested  atomic.Bool
 	paranoidMode     bool
 	reedSolomon      bool
 	forceDecrypt     bool
@@ -119,8 +125,8 @@ func (s *AppState) setupUI(w fyne.Window) {
 	header := widget.NewLabelWithStyle("HadesCrypt 🔱", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	tagline := widget.NewLabelWithStyle("Lock your secrets, rule your data.", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
 
-	// Drag & Drop Area
-	s.dragDropLabel = widget.NewLabelWithStyle("[ Drag & Drop your files here ]", fyne.TextAlignCenter, fyne.TextStyle{})
+	// Drag & Drop Area (supports files and folders)
+	s.dragDropLabel = widget.NewLabelWithStyle("[ Drag & Drop files or folders here ]", fyne.TextAlignCenter, fyne.TextStyle{})
 	s.fileInfoLabel = widget.NewLabel("")
 	
 	dragDropContainer := container.NewVBox(
@@ -137,10 +143,14 @@ func (s *AppState) setupUI(w fyne.Window) {
 		container.NewPadded(dragDropContainer),
 	)
 
-	// File selection button as fallback
-    selectBtn := widget.NewButton("Select File", func() {
+	// File / Folder selection buttons
+	selectFileBtn := widget.NewButton("Select File", func() {
 		s.showFileDialog(w)
-    })
+	})
+	selectFolderBtn := widget.NewButton("Select Folder", func() {
+		s.showFolderDialog(w)
+	})
+	selectButtons := container.NewHBox(selectFileBtn, selectFolderBtn)
 
     // Password controls
 	s.passwordEntry = widget.NewPasswordEntry()
@@ -308,6 +318,12 @@ func (s *AppState) setupUI(w fyne.Window) {
 	actionsRow := container.NewHBox(
 		encryptBtn,
 		decryptBtn,
+		widget.NewButton("Cancel", func(){
+			if !s.cancelRequested.Load() {
+				s.cancelRequested.Store(true)
+				s.statusLabel.SetText("Cancel requested…")
+			}
+		}),
 	)
 
 	progressRow := container.NewBorder(
@@ -321,7 +337,7 @@ func (s *AppState) setupUI(w fyne.Window) {
 		container.NewPadded(container.NewVBox(header, tagline)),
 		widget.NewSeparator(),
 		container.NewPadded(dragDropCard),
-		container.NewPadded(selectBtn),
+		container.NewPadded(selectButtons),
 		widget.NewSeparator(),
 		container.NewPadded(passwordRow),
 		container.NewPadded(confirmPasswordRow),
@@ -368,6 +384,22 @@ func (s *AppState) showFileDialog(w fyne.Window) {
         fd.Show()
 }
 
+// showFolderDialog opens a folder selection dialog for selecting directories
+func (s *AppState) showFolderDialog(w fyne.Window) {
+	fd := dialog.NewFolderOpen(func(list fyne.ListableURI, err error) {
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if list == nil {
+			return
+		}
+		path := list.Path()
+		s.setSelectedFile(path)
+	}, w)
+	fd.Show()
+}
+
 func (s *AppState) setSelectedFile(path string) {
 	s.selectedPath = path
 	s.updateFileInfo()
@@ -394,9 +426,46 @@ func (s *AppState) updateFileInfo() {
 
 	if info.IsDir() {
 		s.dragDropLabel.SetText("📁 " + fileName)
-		s.fileInfoLabel.SetText("Folder selected")
+		modeText := "Archive + Encrypt"
+		if s.recursiveMode {
+			modeText = "Recursive per-file encryption"
+		}
+		// Count files (non-recursive quick info)
+		var fileCount int
+		filepath.Walk(s.selectedPath, func(path string, fi os.FileInfo, err error) error {
+			if err != nil { return nil }
+			if fi.IsDir() { return nil }
+			lower := strings.ToLower(path)
+			if strings.HasSuffix(lower, ".hadescrypt") || strings.HasSuffix(lower, ".heistcrypt") || strings.HasSuffix(lower, ".gpg") { return nil }
+			fileCount++
+			return nil
+		})
+		s.fileInfoLabel.SetText(fmt.Sprintf("Folder: %d file(s) | Mode: %s", fileCount, modeText))
 		// Don't clear comments for directories, user might want to add them
 	} else {
+		// Check sidecar meta indicating archived folder
+		metaPath := s.selectedPath + ".meta"
+		if _, err := os.Stat(metaPath); err == nil {
+			// Show folder-archive icon and parse minimal info
+			data, _ := os.ReadFile(metaPath)
+			// crude parse (avoid adding JSON dep): look for file_count & original_folder
+			fileCount := "?"
+			original := fileName
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "\"file_count\"") {
+					parts := strings.Split(line, ":")
+					if len(parts) > 1 { fileCount = strings.Trim(parts[1], " ,\"") }
+				}
+				if strings.HasPrefix(line, "\"original_folder\"") {
+					parts := strings.Split(line, ":")
+					if len(parts) > 1 { original = strings.Trim(parts[1], " ,\"") }
+				}
+			}
+			s.dragDropLabel.SetText("📦 " + original)
+			s.fileInfoLabel.SetText(fmt.Sprintf("Archived Folder (files: %s)", fileCount))
+			return
+		}
 		s.dragDropLabel.SetText("📄 " + fileName)
 		sizeText := uiutil.HumanBytes(info.Size())
 		
@@ -496,6 +565,7 @@ func (s *AppState) animatePasswordMatch(isMatch bool) {
 }
 
 func (s *AppState) doEncrypt(w fyne.Window) {
+	s.cancelRequested.Store(false)
 	if s.selectedPath == "" {
 		dialog.ShowInformation("Select file", "Please select a file or folder to encrypt.", w)
         return
@@ -519,8 +589,9 @@ func (s *AppState) doEncrypt(w fyne.Window) {
         }
 
 	if info.IsDir() && !s.recursiveMode {
-		dialog.ShowInformation("Folder encryption", "Please enable 'Recursive Mode' in Advanced Options to encrypt folders.", w)
-		return
+		// If recursive mode disabled, we will use archive+encrypt approach (existing encryptDirectory)
+		// Provide info to user that they can switch to per-file mode.
+		// (No blocking return anymore)
 	}
 
 	s.statusLabel.SetText("Encrypting…")
@@ -529,6 +600,7 @@ func (s *AppState) doEncrypt(w fyne.Window) {
     go func() {
 		onProgress := func(done, total int64) {
 			fyne.Do(func() {
+				if s.cancelRequested.Load() { return }
 				if total <= 0 {
 					s.progressBar.SetValue(0)
                 return
@@ -547,7 +619,12 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 		}
 
 		if info.IsDir() {
-			encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress)
+			if s.recursiveMode {
+				encErr = s.encryptDirectoryRecursive(s.selectedPath, finalPassword, onProgress)
+			} else {
+				// Archive first then encrypt single archive outputPath
+				encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress)
+			}
 		} else {
 			encErr = cryptoengine.EncryptFileWithMode(s.selectedPath, outputPath, finalPassword, s.encryptionMode, onProgress)
 		}
@@ -591,6 +668,7 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 }
 
 func (s *AppState) doDecrypt(w fyne.Window) {
+	s.cancelRequested.Store(false)
 	if s.selectedPath == "" {
         dialog.ShowInformation("Select file", "Please select a file to decrypt.", w)
         return
@@ -605,7 +683,19 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 	s.statusLabel.SetText("Decrypting…")
 	s.progressBar.SetValue(0)
 
-    go func() {
+	go func() {
+		// If selectedPath is a directory: decrypt all encrypted files inside.
+		if info, err := os.Stat(s.selectedPath); err == nil && info.IsDir() {
+			start := time.Now()
+			finalPassword := []byte(s.password)
+			if s.keyfileManager.HasKeyfiles() { finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password)) }
+			err := s.decryptDirectoryRecursive(s.selectedPath, finalPassword, func(done,total int64){ fyne.Do(func(){ if total>0 { s.progressBar.SetValue(float64(done)/float64(total)) } }) })
+			elapsed := time.Since(start).Round(time.Millisecond)
+			fyne.Do(func(){
+				if err != nil { s.statusLabel.SetText("Error: "+err.Error()) } else { s.statusLabel.SetText(fmt.Sprintf("✅ Folder decrypted in %s", elapsed)) }
+			})
+			return
+		}
 		onProgress := func(done, total int64) {
 			fyne.Do(func() {
 				if total <= 0 {
@@ -624,14 +714,11 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 			finalPassword = s.keyfileManager.GetCombinedKey([]byte(s.password))
 		}
 
-		// Check if this might be an encrypted folder (has .hadescrypt extension and might contain an archive)
+		// Auto decrypt for HadesCrypt (.hadescrypt/.heistcrypt) – handles single-file or archived folder transparently
 		var err error
-		isEncryptedFolder := strings.HasSuffix(strings.ToLower(s.selectedPath), ".hadescrypt")
-		
-		if isEncryptedFolder && s.recursiveMode {
-			err = s.decryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress)
+		if s.isHadesCryptFile(s.selectedPath) {
+			err = s.decryptFileAuto(s.selectedPath, outputPath, finalPassword, onProgress)
 		} else {
-			// Check if it's a GnuPG file
 			if s.isGnuPGFile(s.selectedPath) {
 				err = cryptoengine.DecryptFileWithGnuPG(s.selectedPath, outputPath, finalPassword, onProgress)
 			} else {
@@ -656,7 +743,11 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 		}
 
 		fyne.Do(func() {
-        if err != nil {
+			if err != nil {
+				if strings.Contains(err.Error(), "canceled") {
+					s.statusLabel.SetText("Canceled")
+					return
+				}
 				historyEntry.Result = "error"
 				historyEntry.Error = err.Error()
 				s.statusLabel.SetText("Error: " + err.Error())
@@ -700,6 +791,18 @@ func (s *AppState) encryptDirectory(inputDir, outputPath string, password []byte
 		return fmt.Errorf("create archive: %w", err)
 	}
 
+	// Compute SHA-256 of plaintext archive for integrity metadata
+	archiveHash := ""
+	{
+		f, herr := os.Open(tempArchive)
+		if herr == nil {
+			defer f.Close()
+			h := sha256.New()
+			io.Copy(h, f)
+			archiveHash = hex.EncodeToString(h.Sum(nil))
+		}
+	}
+
 	// Encrypt the archive
 	err = cryptoengine.EncryptFile(tempArchive, outputPath, password, func(processed, total int64) {
 		// Report progress for encryption phase (50-100%)
@@ -712,6 +815,61 @@ func (s *AppState) encryptDirectory(inputDir, outputPath string, password []byte
 		return fmt.Errorf("encrypt archive: %w", err)
 	}
 
+    // Sidecar metadata to help future detection (.meta JSON)
+    metaPath := outputPath + ".meta"
+    // Count files & sum size
+    var fileCount int
+    var totalBytes int64
+    filepath.Walk(inputDir, func(p string, info os.FileInfo, err error) error {
+        if err != nil { return nil }
+        if info != nil && !info.IsDir() { fileCount++; totalBytes += info.Size() }
+        return nil
+    })
+	metaJSON := fmt.Sprintf("{\n  \"type\": \"archive-folder\",\n  \"original_folder\": %q,\n  \"file_count\": %d,\n  \"total_size\": %d,\n  \"archive_sha256\": %q\n}", filepath.Base(inputDir), fileCount, totalBytes, archiveHash)
+    os.WriteFile(metaPath, []byte(metaJSON), 0600)
+
+	return nil
+}
+
+// encryptDirectoryRecursive walks a directory and encrypts each file individually preserving structure.
+// Each file produces <name>.hadescrypt (or .gpg) beside original. Progress aggregated by total bytes.
+func (s *AppState) encryptDirectoryRecursive(inputDir string, password []byte, onProgress cryptoengine.ProgressCallback) error {
+	var totalBytes int64
+	var files []string
+	// Collect files
+	err := filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil { return err }
+		if info.IsDir() { return nil }
+		// Skip already encrypted outputs
+		lower := strings.ToLower(path)
+		if strings.HasSuffix(lower, ".hadescrypt") || strings.HasSuffix(lower, ".heistcrypt") || strings.HasSuffix(lower, ".gpg") { return nil }
+		files = append(files, path)
+		totalBytes += info.Size()
+		return nil
+	})
+	if err != nil { return err }
+	if totalBytes == 0 { return fmt.Errorf("no files to encrypt in directory") }
+
+	var processedBytes int64
+	for _, file := range files {
+		if s.cancelRequested.Load() { return fmt.Errorf("canceled") }
+		rel, _ := filepath.Rel(inputDir, file)
+		// progress callback for single file
+		fi, _ := os.Stat(file)
+		singleSize := fi.Size()
+		fileOutput := file + ".hadescrypt"
+		if s.encryptionMode == cryptoengine.ModeGnuPG { fileOutput = file + ".gpg" }
+		err := cryptoengine.EncryptFileWithMode(file, fileOutput, password, s.encryptionMode, func(done, total int64){
+			// translate per-file progress into global progress (estimate): processedBytes + done
+			if onProgress != nil && totalBytes > 0 {
+				onProgress(processedBytes+done, totalBytes)
+			}
+		})
+		if err != nil { return fmt.Errorf("encrypt %s: %w", rel, err) }
+		processedBytes += singleSize
+		if onProgress != nil { onProgress(processedBytes, totalBytes) }
+		if s.deleteAfter { os.Remove(file) }
+	}
 	return nil
 }
 
@@ -753,6 +911,137 @@ func (s *AppState) decryptDirectory(encryptedFile, outputDir string, password []
 	return nil
 }
 
+// decryptFileAuto decrypts a hades/heist crypt file then inspects if decrypted result is a gzip tar archive.
+// If archive: extracts into a directory (outputPath) and removes temp decrypted file.
+// If not archive: keeps decrypted file.
+func (s *AppState) decryptFileAuto(encryptedFile, outputPath string, password []byte, onProgress cryptoengine.ProgressCallback) error {
+	// Read header quickly for integrity (HadesCrypt only)
+	var expectedSize int64 = -1
+	if s.isHadesCryptFile(encryptedFile) {
+		f, err := os.Open(encryptedFile)
+		if err == nil {
+			defer f.Close()
+			buf := make([]byte, 4)
+			if _, err := io.ReadFull(f, buf); err == nil && string(buf) == "HAD1" {
+				// version
+				ver := make([]byte,1); io.ReadFull(f,ver)
+				mode := make([]byte,1); io.ReadFull(f,mode)
+				salt := make([]byte,16); io.ReadFull(f,salt)
+				nonce := make([]byte,8); io.ReadFull(f,nonce)
+				cs := make([]byte,4); io.ReadFull(f,cs)
+				osz := make([]byte,8); if _, err := io.ReadFull(f,osz); err==nil { expectedSize = int64(binary.BigEndian.Uint64(osz)) }
+			}
+		}
+	}
+	tempDecrypted := encryptedFile + ".__dec_tmp__"
+	defer os.Remove(tempDecrypted)
+	// low-level decrypt (not directory)
+	err := cryptoengine.DecryptFile(encryptedFile, tempDecrypted, password, s.forceDecrypt, onProgress)
+	if err != nil { return err }
+	// Check if decrypted is archive
+	if archiver.IsArchive(tempDecrypted) {
+		// Optional hash verification via sidecar meta
+		metaPath := encryptedFile + ".meta"
+		if data, rerr := os.ReadFile(metaPath); rerr == nil {
+			// crude parse for archive_sha256
+			lines := strings.Split(string(data), "\n")
+			var expectedHash string
+			for _, ln := range lines {
+				if strings.Contains(ln, "archive_sha256") {
+					parts := strings.Split(ln, ":")
+					if len(parts) >= 2 {
+						v := strings.TrimSpace(parts[1])
+						v = strings.Trim(v, ",")
+						v = strings.Trim(v, "\"")
+						expectedHash = v
+						break
+					}
+				}
+			}
+			if expectedHash != "" {
+				f, herr := os.Open(tempDecrypted)
+				if herr == nil {
+					h := sha256.New()
+					io.Copy(h, f)
+					f.Close()
+					calc := hex.EncodeToString(h.Sum(nil))
+					if !strings.EqualFold(calc, expectedHash) {
+						fyne.Do(func(){ s.statusLabel.SetText("❌ Hash mismatch — decryption aborted") })
+						return fmt.Errorf("archive hash mismatch (expected %s got %s)", expectedHash, calc)
+					}
+					fyne.Do(func(){ s.statusLabel.SetText("🔐 Hash verified OK — extracting...") })
+				}
+			}
+		}
+		// Ensure directory target
+		if err := os.MkdirAll(outputPath, 0755); err != nil { return err }
+		var archCb archiver.ProgressCallback
+		if onProgress != nil { archCb = func(done,total int64){ onProgress(done,total) } }
+		if err := archiver.ExtractTarGz(tempDecrypted, outputPath, archCb); err != nil {
+			return fmt.Errorf("extract archive: %w", err)
+		}
+		// Remove sidecar meta if exists
+		os.Remove(metaPath)
+		return nil
+	}
+	// Not archive -> move/rename to outputPath
+	if err := os.Rename(tempDecrypted, outputPath); err != nil { return err }
+	if expectedSize >= 0 {
+		if fi, err := os.Stat(outputPath); err == nil && fi.Size() != expectedSize {
+			return fmt.Errorf("integrity warning: size mismatch expected %d got %d", expectedSize, fi.Size())
+		}
+	}
+	return nil
+}
+
+// decryptDirectoryRecursive decrypts every encrypted file within a directory tree.
+// It handles .hadescrypt, .heistcrypt, .gpg, .pgp files. Output overwrites by stripping extension.
+func (s *AppState) decryptDirectoryRecursive(root string, password []byte, onProgress cryptoengine.ProgressCallback) error {
+	var encryptedFiles []string
+	var totalBytes int64
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil { return err }
+		if info.IsDir() { return nil }
+		lower := strings.ToLower(path)
+		if strings.HasSuffix(lower, ".hadescrypt") || strings.HasSuffix(lower, ".heistcrypt") || strings.HasSuffix(lower, ".gpg") || strings.HasSuffix(lower, ".pgp") {
+			encryptedFiles = append(encryptedFiles, path)
+			totalBytes += info.Size()
+		}
+		return nil
+	})
+	if err != nil { return err }
+	if len(encryptedFiles) == 0 { return fmt.Errorf("no encrypted files found in folder") }
+
+	var processedBytes int64
+	for i, file := range encryptedFiles {
+		if s.cancelRequested.Load() { return fmt.Errorf("canceled") }
+		rel, _ := filepath.Rel(root, file)
+		fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("Decrypting %d/%d: %s", i+1, len(encryptedFiles), rel)) })
+		outPath := s.defaultOutputPathForDecrypt(file)
+		fi, _ := os.Stat(file)
+		size := fi.Size()
+		// choose method
+		var derr error
+		if s.isGnuPGFile(file) {
+			derr = cryptoengine.DecryptFileWithGnuPG(file, outPath, password, func(done,total int64){ if onProgress!=nil { onProgress(processedBytes+done,totalBytes) } })
+		} else if s.isHadesCryptFile(file) {
+			derr = s.decryptFileAuto(file, outPath, password, func(done,total int64){ if onProgress!=nil { onProgress(processedBytes+done,totalBytes) } })
+		} else {
+			derr = cryptoengine.DecryptFile(file, outPath, password, s.forceDecrypt, func(done,total int64){ if onProgress!=nil { onProgress(processedBytes+done,totalBytes) } })
+		}
+		if derr != nil { return fmt.Errorf("decrypt %s: %w", rel, derr) }
+		// history entry
+		hist := config.HistoryEntry{FileName: rel, Operation: "decrypt", Size: size, Timestamp: time.Now().Unix(), Result: "success"}
+		s.config.AddHistoryEntry(hist)
+		processedBytes += size
+		if onProgress != nil { onProgress(processedBytes, totalBytes) }
+		if s.deleteAfter { os.Remove(file) }
+	}
+	fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Decrypted %d files", len(encryptedFiles))) })
+	s.config.Save()
+	return nil
+}
+
 func (s *AppState) defaultOutputPathForEncrypt(inPath string) string {
 	// Use appropriate extension based on encryption mode
 	if s.encryptionMode == cryptoengine.ModeGnuPG {
@@ -772,11 +1061,11 @@ func (s *AppState) defaultOutputPathForDecrypt(inPath string) string {
 		return strings.TrimSuffix(inPath, ".pgp")
 	}
 	
-	// Handle HadesCrypt files
-	if strings.HasSuffix(lowerPath, ".hades") {
-		return strings.TrimSuffix(inPath, ".hades")
-	}
-	if strings.HasSuffix(lowerPath, ".hadescrypt") {
+    // Handle HadesCrypt files
+    if strings.HasSuffix(lowerPath, ".hades") {
+        return strings.TrimSuffix(inPath, ".hades")
+    }
+    if strings.HasSuffix(lowerPath, ".hadescrypt") || strings.HasSuffix(lowerPath, ".heistcrypt") {
         return strings.TrimSuffix(inPath, filepath.Ext(inPath))
     }
 	
@@ -814,6 +1103,20 @@ func (s *AppState) isGnuPGFile(filePath string) bool {
 	}
 	
 	return false
+}
+
+// isHadesCryptFile detects files produced by HadesCrypt (.hadescrypt or .heistcrypt) using extension and magic header.
+func (s *AppState) isHadesCryptFile(path string) bool {
+	lower := strings.ToLower(path)
+	if !(strings.HasSuffix(lower, ".hadescrypt") || strings.HasSuffix(lower, ".heistcrypt")) {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil { return false }
+	defer f.Close()
+	header := make([]byte, 4)
+	if _, err := f.Read(header); err != nil { return false }
+	return string(header) == "HAD1"
 }
 
 func (s *AppState) updateKeyfilesDisplay() {
