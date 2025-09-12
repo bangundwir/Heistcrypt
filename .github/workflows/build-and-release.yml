@@ -3,255 +3,131 @@ name: Build and Release HadesCrypt
 on:
   push:
     tags:
-      - 'v*.*.*'  # Trigger on version tags like v2.0.0
-  workflow_dispatch:  # Allow manual trigger
+      - 'v*.*.*'
+  workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build (e.g., 2.0.0)'
-        required: true
-        default: '2.0.0'
+        description: 'Version to build (e.g., 2.1.0) if no tag'
+        required: false
 
 env:
   GO_VERSION: '1.25.x'
-  APP_NAME: 'HadesCrypt'
-  BUILD_DIR: 'dist'
+  APP_NAME: HadesCrypt
+  BUILD_DIR: dist
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build HadesCrypt
     runs-on: windows-latest
-    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Fetch all history for tags
-    
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Get version from tag or input
-      id: version
-      shell: pwsh
-      run: |
-        if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-          $version = '${{ github.event.inputs.version }}'
-        } else {
-          $version = $env:GITHUB_REF -replace '^refs/tags/v',''
-        }
-        "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-        Write-Host "Building version: $version"
-    
-    - name: Create build directories
-      run: |
-        New-Item -ItemType Directory -Force -Path "${{ env.BUILD_DIR }}\windows"
-    
-    - name: Install dependencies
-      run: go mod tidy
-    
-    - name: Build for Windows x64
-      shell: pwsh
-      run: |
-        $version = "${{ steps.version.outputs.version }}"
-        $ldflags = "-s -w -H windowsgui -X main.version=$version"
-        $output = "${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v$version-Windows-x64.exe"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-        Write-Host "Building with version: $version"
-        Write-Host "Output: $output"
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
-        go build -ldflags $ldflags -o $output .
+      - name: Derive Version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and '${{ github.event.inputs.version }}' -ne '') {
+            $v='${{ github.event.inputs.version }}'
+          } else {
+            $v=$env:GITHUB_REF -replace '^refs/tags/v',''
+          }
+            "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Set-Content VERSION $v
+            Write-Host "Version: $v"
 
-        if (Test-Path $output) {
-          $size = (Get-Item $output).Length
-          Write-Host "Build successful! Size: $size bytes"
-        } else {
-          Write-Error "Build failed - executable not found"
-          exit 1
-        }
-    
-    
-    - name: Create portable package (folder)
-      shell: pwsh
-      run: |
-        $version = "${{ steps.version.outputs.version }}"
-        $packageDir = "${{ env.BUILD_DIR }}\windows\dist\${{ env.APP_NAME }}-v$version-Windows-x64"
+      - name: Build Windows x64
+        shell: pwsh
+        run: |
+          $v='${{ steps.version.outputs.version }}'
+          New-Item -ItemType Directory -Force -Path '${{ env.BUILD_DIR }}\windows' | Out-Null
+          $out='${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v'+$v+'-Windows-x64.exe'
+          $ld='-s -w -H windowsgui -X main.version='+$v
+          go build -ldflags $ld -o $out .
+          if (!(Test-Path $out)) { Write-Error 'Build failed'; exit 1 }
 
-        New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+      - name: Portable Package
+        shell: pwsh
+        run: |
+          $v='${{ steps.version.outputs.version }}'
+          $pkg='${{ env.BUILD_DIR }}\windows\dist\${{ env.APP_NAME }}-v'+$v+'-Windows-x64'
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item '${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v'+$v+'-Windows-x64.exe' "$pkg\${{ env.APP_NAME }}.exe"
+          foreach ($f in 'README.md','CHANGELOG.md','VERSION') { if (Test-Path $f) { Copy-Item $f $pkg -ErrorAction SilentlyContinue } }
+          @("# HadesCrypt v$v Quick Start","Run ${ { env.APP_NAME } }.exe","Drag & drop to encrypt/decrypt") | Out-File -FilePath "$pkg\QUICK_START.txt" -Encoding utf8
+          Get-ChildItem $pkg | Select Name,Length | Format-Table -AutoSize | Out-String | Out-File "$pkg\FILES.txt"
 
-        Copy-Item "${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v$version-Windows-x64.exe" "$packageDir\${{ env.APP_NAME }}.exe"
-        Copy-Item "README.md" "$packageDir\" -ErrorAction SilentlyContinue
-        Copy-Item "CHANGELOG.md" "$packageDir\" -ErrorAction SilentlyContinue
-        Copy-Item "VERSION" "$packageDir\" -ErrorAction SilentlyContinue
+      - name: Zip & Checksums
+        shell: pwsh
+        run: |
+          $v='${{ steps.version.outputs.version }}'
+          $base='${{ env.BUILD_DIR }}\windows'
+          $pkgDir="$base\dist\${{ env.APP_NAME }}-v${v}-Windows-x64"
+          $zip="$base\${{ env.APP_NAME }}-v${v}-Windows-x64.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$pkgDir\*" -DestinationPath $zip
+          $exe="$base\${{ env.APP_NAME }}-v${v}-Windows-x64.exe"
+          $checksums="$base\SHA256SUMS.txt"
+          ("${{ env.APP_NAME }}-v${v}-Windows-x64.exe  " + (Get-FileHash -Algorithm SHA256 $exe).Hash) | Out-File $checksums -Encoding ascii
+          ("${{ env.APP_NAME }}-v${v}-Windows-x64.zip  " + (Get-FileHash -Algorithm SHA256 $zip).Hash) | Out-File $checksums -Append -Encoding ascii
 
-        $quickStart = @"
-# HadesCrypt v$version - Quick Start Guide
-
-## Installation
-1. Download and extract this package
-2. Run HadesCrypt.exe
-3. No installation required - portable application
-
-## Usage
-1. Drag & drop files/folders to encrypt/decrypt
-2. Enter a strong password or use the password generator
-3. Choose encryption mode (AES-256-GCM recommended)
-4. Click Encrypt or Decrypt
-
-## Features
-- Military-grade AES-256-GCM encryption
-- Drag & drop interface
-- Password generator with strength meter
-- Multiple encryption modes
-- Keyfile support
-- Folder encryption
-- Progress tracking
-
-## Security
-- Uses Argon2id for key derivation
-- Cryptographically secure random number generation
-- Secure memory handling
-- Built-in integrity protection
-
-For more information, see README.md
-"@
-        $quickStart | Out-File -FilePath "$packageDir\QUICK_START.txt" -Encoding UTF8
-
-        Get-ChildItem $packageDir | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String | Out-File -FilePath "$packageDir\FILES.txt"
-
-  - name: Create ZIP package and checksums
-      shell: pwsh
-      run: |
-        $version = "${{ steps.version.outputs.version }}"
-        $zipPath = "${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v$version-Windows-x64.zip"
-        $exePath = "${{ env.BUILD_DIR }}\windows\${{ env.APP_NAME }}-v$version-Windows-x64.exe"
-        $packageDir = "${{ env.BUILD_DIR }}\windows\dist\${{ env.APP_NAME }}-v$version-Windows-x64"
-        $checksums = "${{ env.BUILD_DIR }}\windows\SHA256SUMS.txt"
-
-        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-        Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -Force
-
-        $exeHash = (Get-FileHash -Algorithm SHA256 $exePath).Hash
-        $zipHash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash
-        "${{ env.APP_NAME }}-v$version-Windows-x64.exe  $exeHash" | Out-File -FilePath $checksums -Encoding ascii
-        "${{ env.APP_NAME }}-v$version-Windows-x64.zip  $zipHash" | Out-File -FilePath $checksums -Append -Encoding ascii
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: hadescrypt-windows-v${{ steps.version.outputs.version }}
-        path: |
-          ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
-          ${{ env.BUILD_DIR }}/windows/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.zip
-          ${{ env.BUILD_DIR }}/windows/SHA256SUMS.txt
-          ${{ env.BUILD_DIR }}/windows/dist/
-        retention-days: 30
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-v${{ steps.version.outputs.version }}
+          path: |
+            ${{ env.BUILD_DIR }}/windows/*.exe
+            ${{ env.BUILD_DIR }}/windows/*.zip
+            ${{ env.BUILD_DIR }}/windows/SHA256SUMS.txt
+            ${{ env.BUILD_DIR }}/windows/dist/**
+          retention-days: 30
 
   release:
-    name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    
+    if: startsWith(github.ref,'refs/tags/v')
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    
-    - name: Get version from tag
-      id: version
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Building release for version: $VERSION"
-    
-  - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: hadescrypt-windows-v${{ steps.version.outputs.version }}
-        path: ./artifacts
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-v${{ needs.build.outputs.version }}
+          path: artifacts
 
-  - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: HadesCrypt v${{ steps.version.outputs.version }}
-        body: |
-          ## 🔱 HadesCrypt v${{ steps.version.outputs.version }}
-          
-          **Lock your secrets, rule your data.**
-          
-          ### What's New
-          - Military-grade AES-256-GCM encryption
-          - Drag & drop interface for easy file/folder encryption
-          - Password generator with strength meter
-          - Multiple encryption modes (Normal, Paranoid, Post-Quantum, GnuPG)
-          - Keyfile support for enhanced security
-          - Folder encryption with recursive mode
-          - Real-time progress tracking
-          - Advanced options panel
-          
-          ### Installation
-          1. Download `HadesCrypt-v${{ steps.version.outputs.version }}-Windows-x64.exe`
-          2. Run the executable (no installation required)
-          
-          ### Security Features
-          - ✅ AES-256-GCM authenticated encryption
-          - ✅ Argon2id key derivation
-          - ✅ Cryptographically secure RNG
-          - ✅ Secure memory handling
-          - ✅ Built-in integrity protection
-          
-          ### System Requirements
-          - Windows 10/11 (64-bit)
-          - No additional dependencies required
-          
-          ---
-          
-          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.ref_name }}
-        files: |
-          artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe
-          artifacts/${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.zip
-          artifacts/SHA256SUMS.txt
-        draft: false
-        prerelease: false
-        generate_release_notes: true
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: HadesCrypt v${{ needs.build.outputs.version }}
+          files: |
+            artifacts/*.exe
+            artifacts/*.zip
+            artifacts/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true
 
   test-build:
-    name: Test Build
+    if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref,'refs/tags/v')
     runs-on: windows-latest
-    if: github.event_name == 'workflow_dispatch'
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-    
-    - name: Test build
-      run: |
-        go mod tidy
-        go build -o test-build.exe .
-        
-        # Test that executable runs (just check version/help)
-        if (Test-Path test-build.exe) {
-          Write-Host "Build test successful!"
-          $size = (Get-Item test-build.exe).Length
-          Write-Host "Executable size: $size bytes"
-        } else {
-          Write-Error "Build test failed"
-          exit 1
-        }
-    
-    - name: Cleanup test build
-      run: Remove-Item test-build.exe -ErrorAction SilentlyContinue
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Test Build
+        run: |
+          go build -o test-build.exe .
+          if (Test-Path test-build.exe) { Write-Host 'OK' } else { exit 1 }

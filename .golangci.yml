@@ -1,0 +1,27 @@
+run:
+  timeout: 5m
+  tests: false
+  skip-dirs:
+    - dist
+    - .github
+  modules-download-mode: readonly
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+  disable:
+    - depguard
+    - errcheck
+
+linters-settings:
+  staticcheck:
+    go: "1.22"

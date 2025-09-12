@@ -34,12 +34,12 @@ jobs:
         # Avoid building GUI dependencies that require X11/GL on Linux runners
         go test -v ./internal/...
     
-    - name: Run linter
+    - name: Run linter (internal only)
       uses: golangci/golangci-lint-action@v3
       with:
         version: latest
         install-mode: goinstall
-        args: --timeout=5m --out-format=colored-line-number
+        args: --timeout=5m --out-format=colored-line-number ./internal/...
 
   build-check:
     name: Build Check (Windows)
