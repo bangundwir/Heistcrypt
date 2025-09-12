@@ -700,7 +700,7 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 		if singleInfo.IsDir() && !s.recursiveMode { /* archive mode comment */ }
 	}
 
-	s.statusLabel.SetText("Encrypting…")
+	s.statusLabel.SetText("🔐 Encrypting…")
 	s.setProgressFraction(0)
 
     go func() {
@@ -729,7 +729,7 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 				if s.cancelRequested.Load() { encErr = fmt.Errorf("canceled"); break }
 				fi, err := os.Stat(p); if err != nil { continue }
 				base := filepath.Base(p)
-				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("Encrypting %d/%d: %s", idx+1, len(s.selectedPaths), base)) })
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("🔐 %d/%d %s", idx+1, len(s.selectedPaths), base)) })
 				if fi.IsDir() {
 					// Choose strategy: recursive or archive
 					if s.recursiveMode {
@@ -770,15 +770,15 @@ func (s *AppState) doEncrypt(w fyne.Window) {
 				if onProgress != nil { onProgress(processed, grandTotal) }
 			}
 			elapsed := time.Since(start).Round(time.Millisecond)
-			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted %d item(s) in %s", len(s.selectedPaths), elapsed)) }) }
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ %d items encrypted (%s)", len(s.selectedPaths), elapsed)) }) }
 		} else if singleInfo != nil && singleInfo.IsDir() {
 			if s.recursiveMode { encErr = s.encryptDirectoryRecursive(s.selectedPath, finalPassword, onProgress) } else { encErr = s.encryptDirectory(s.selectedPath, outputPath, finalPassword, onProgress) }
 			elapsed := time.Since(start).Round(time.Millisecond)
-			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted folder in %s", elapsed)) }); s.addFolder(0) }
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Folder encrypted (%s)", elapsed)) }); s.addFolder(0) }
 		} else {
 			encErr = cryptoengine.EncryptFileWithMode(s.selectedPath, outputPath, finalPassword, s.encryptionMode, onProgress)
 			elapsed := time.Since(start).Round(time.Millisecond)
-			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Encrypted %s in %s", filepath.Base(s.selectedPath), elapsed)) }); if singleInfo!=nil { s.addFile(singleInfo.Size()) } }
+			if encErr == nil { fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ %s encrypted (%s)", filepath.Base(s.selectedPath), elapsed)) }); if singleInfo!=nil { s.addFile(singleInfo.Size()) } }
 			// single file history
 			s.config.AddHistoryEntry(config.HistoryEntry{FileName: filepath.Base(s.selectedPath), Operation:"encrypt", Size: singleInfo.Size(), Timestamp: time.Now().Unix(), Result: "success"})
 			if s.deleteAfter { os.Remove(s.selectedPath) }
@@ -809,7 +809,7 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 	outputPath := ""
 	if s.selectedPath != "" { outputPath = s.defaultOutputPathForDecrypt(s.selectedPath) }
 
-	s.statusLabel.SetText("Decrypting…")
+	s.statusLabel.SetText("🔓 Decrypting…")
 	s.setProgressFraction(0)
 
 	go func() {
@@ -840,7 +840,7 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 				if s.cancelRequested.Load() { break }
 				fi, err := os.Stat(t); if err != nil { continue }
 				base := filepath.Base(t)
-				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("Decrypting %d/%d: %s", idx+1, len(targets), base)) })
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("🔓 %d/%d %s", idx+1, len(targets), base)) })
 				if fi.IsDir() {
 					// Decrypt all encrypted files inside directory recursively
 					dErr := s.decryptDirectoryRecursive(t, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } })
@@ -850,14 +850,14 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 						low:=strings.ToLower(sp)
 						if strings.HasSuffix(low, ".hadescrypt") || strings.HasSuffix(low, ".heistcrypt") || strings.HasSuffix(low, ".gpg") || strings.HasSuffix(low, ".pgp") { processed += info.Size() }
 						return nil })
-					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); s.noteError(dErr); break } else { s.addFolder(0) }
+					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("❌ "+dErr.Error()) }); s.noteError(dErr); break } else { s.addFolder(0) }
 				} else {
 					out := s.defaultOutputPathForDecrypt(t)
 					var dErr error
 					if s.isHadesCryptFile(t) { dErr = s.decryptFileAuto(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } })
 					} else if s.isGnuPGFile(t) { dErr = cryptoengine.DecryptFileWithGnuPG(t, out, finalPassword, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } })
 					} else { dErr = cryptoengine.DecryptFile(t, out, finalPassword, s.forceDecrypt, func(done,total int64){ if totalBytes>0 { fyne.Do(func(){ s.setProgressFraction(float64(processed+done)/float64(totalBytes)) }) } }) }
-					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("Error: "+dErr.Error()) }); s.noteError(dErr); break } else { s.addFile(fi.Size()) }
+					if dErr != nil { fyne.Do(func(){ s.statusLabel.SetText("❌ "+dErr.Error()) }); s.noteError(dErr); break } else { s.addFile(fi.Size()) }
 					processed += fi.Size()
 				}
 				fyne.Do(func(){ if totalBytes>0 { s.setProgressFraction(float64(processed)/float64(totalBytes)) } })
@@ -866,7 +866,7 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 			if s.cancelRequested.Load() { s.markCanceled() }
 			if !s.cancelRequested.Load() {
 				elapsed := time.Since(start).Round(time.Millisecond)
-				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ Decrypted %d item(s) in %s", len(targets), elapsed)) })
+				fyne.Do(func(){ s.statusLabel.SetText(fmt.Sprintf("✅ %d items decrypted (%s)", len(targets), elapsed)) })
 			} else { fyne.Do(func(){ s.statusLabel.SetText("Canceled") }) }
 			sum := s.finishSummary(); fyne.Do(func(){ if sum!=nil { s.showSummaryDialog(w,sum) } })
 			return
@@ -879,7 +879,7 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 			err := s.decryptDirectoryRecursive(s.selectedPath, finalPassword, func(done,total int64){ fyne.Do(func(){ if total>0 { s.setProgressFraction(float64(done)/float64(total)) } }) })
 			elapsed := time.Since(start).Round(time.Millisecond)
 			fyne.Do(func(){
-				if err != nil { s.statusLabel.SetText("Error: "+err.Error()); s.noteError(err) } else { s.statusLabel.SetText(fmt.Sprintf("✅ Folder decrypted in %s", elapsed)); s.addFolder(0) }
+				if err != nil { s.statusLabel.SetText("❌ "+err.Error()); s.noteError(err) } else { s.statusLabel.SetText(fmt.Sprintf("✅ Folder decrypted (%s)", elapsed)); s.addFolder(0) }
 			})
 			sum := s.finishSummary(); fyne.Do(func(){ if sum!=nil { s.showSummaryDialog(w,sum) } })
 			return
@@ -932,11 +932,11 @@ func (s *AppState) doDecrypt(w fyne.Window) {
 
 		fyne.Do(func() {
 			if err != nil {
-				if strings.Contains(err.Error(), "canceled") { s.statusLabel.SetText("Canceled"); s.markCanceled(); return }
-				historyEntry.Result = "error"; historyEntry.Error = err.Error(); s.statusLabel.SetText("Error: "+err.Error()); s.noteError(err); dialog.ShowError(err, w)
+				if strings.Contains(err.Error(), "canceled") { s.statusLabel.SetText("⏹️ Canceled"); s.markCanceled(); return }
+				historyEntry.Result = "error"; historyEntry.Error = err.Error(); s.statusLabel.SetText("❌ "+err.Error()); s.noteError(err); dialog.ShowError(err, w)
 			} else {
-				historyEntry.Result = "success"; statusMsg := fmt.Sprintf("✅ Decrypted to %s in %s", filepath.Base(outputPath), elapsed)
-				if s.deleteAfter { if deleteErr := os.Remove(s.selectedPath); deleteErr != nil { statusMsg += " (Warning: Could not delete source)" } else { statusMsg += " (Source deleted)" } }
+				historyEntry.Result = "success"; statusMsg := fmt.Sprintf("✅ Decrypted → %s (%s)", filepath.Base(outputPath), elapsed)
+				if s.deleteAfter { if deleteErr := os.Remove(s.selectedPath); deleteErr != nil { statusMsg += " • source kept" } else { statusMsg += " • source deleted" } }
 				s.statusLabel.SetText(statusMsg); if fileSize>0 { s.addFile(fileSize) }
 			}
 		})

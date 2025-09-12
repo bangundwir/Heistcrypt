@@ -99,6 +99,50 @@ Two modes are supported:
 
 Choose the mode based on distribution and update workflow (per-file allows incremental updates; archive simplifies sharing).
 
+## Multi-File & Mixed Operations
+
+Select multiple files and folders at once (drag-and-drop or multi-select dialog). The app:
+- Accepts mixed regular files and directories
+- Uses Archive or Recursive strategy per the toggle for each folder
+- Shows one aggregated progress bar over total plaintext bytes
+- Skips items already encrypted (`.hadescrypt`, `.heistcrypt`, `.gpg`, `.pgp`)
+- Supports cancel; already finished items remain
+
+Decryption likewise supports mixed selections; directories are scanned and encrypted items inside are auto-detected and processed.
+
+## Folder Archive Integrity Hash
+
+Archive Mode adds a SHA-256 hash of the plaintext `tar.gz` stored in `<archive>.hadescrypt.meta`.
+On decrypt:
+- ✅ Match → proceeds (`🔐 Hash verified OK — extracting...`)
+- ❌ Mismatch → aborts extraction (`❌ Hash mismatch — decryption aborted`)
+
+## Operation Summary Dialog
+
+After each run a summary shows: operation, counts (files, folders), total size, duration, errors or cancellation.
+History still tracks each item individually.
+
+## Smooth Throttled Progress
+
+Progress updates are throttled by time and delta thresholds for a fluid UI while retaining responsiveness on large batches.
+
+## Unified Status Messages
+
+Examples:
+- `🔐 Encrypting…`
+- `🔐 3/10 report.pdf`
+- `✅ 10 items encrypted (1.23s)`
+- `✅ Folder encrypted (842ms)`
+- `✅ Decrypted → data.txt (512ms)`
+- `⏹️ Canceled`
+- `❌ <error>`
+
+## Usage Tips
+- Prefer Recursive Mode for incremental changes inside large folders
+- Prefer Archive Mode for distribution + single-file integrity hashing
+- Verify decrypted outputs before enabling delete-after for critical data
+
+
 ## Configuration
 
 Configuration is stored at `~/.hadescrypt/config.json` and includes:

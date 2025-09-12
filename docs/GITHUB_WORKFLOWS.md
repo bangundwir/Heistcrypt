@@ -7,37 +7,40 @@ This document explains the GitHub Actions workflows set up for HadesCrypt.
 ### 1. Build and Release (`build-and-release.yml`)
 
 **Triggers:**
-- Push to version tags (e.g., `v2.0.0`)
-- Manual workflow dispatch
 
 **Jobs:**
-- **Build**: Creates Windows executable with version info
-- **Release**: Creates GitHub release with artifacts
-- **Test Build**: Manual build testing
 
 **Features:**
-- ✅ Automatic version detection from git tags
-- ✅ Windows x64 build with GUI mode
-- ✅ Portable package creation with documentation
-- ✅ GitHub release automation
-- ✅ Build artifact upload
 
 ### 2. CI/CD (`ci.yml`)
 
 **Triggers:**
-- Push to `main` or `develop` branches
-- Pull requests to `main`
 
 **Jobs:**
-- **Test**: Runs Go tests and linting
-- **Build Check**: Multi-platform build verification (Windows & Linux only)
-- **Security Scan**: Gosec security analysis
 
 **Features:**
-- ✅ Automated testing on every commit
-- ✅ Multi-platform build verification (Windows, Linux)
-- ✅ Security vulnerability scanning
-- ✅ Code quality checks
+
+### 3. Windows Release Only (`release-windows.yml`)
+
+Focused workflow to build and publish ONLY the Windows binary & portable zip.
+
+**Triggers:**
+- Push tag `v*` (e.g. `v2.0.4`) → automatic release
+- Manual `workflow_dispatch` (optional version input) → builds & creates release
+
+**Jobs:**
+- `build-windows`: Builds Windows x64, generates SHA256, creates portable zip, uploads artifacts
+- `release-manual`: (dispatch without tag) creates a release using provided version
+
+**Artifacts Produced:**
+- `HadesCrypt-vX.Y.Z-Windows-x64.exe`
+- `HadesCrypt-vX.Y.Z-Windows-x64.exe.sha256` (or `.sha256.txt` fallback)
+- `HadesCrypt-vX.Y.Z-Windows-portable.zip`
+
+**Notes:**
+- Uses `-ldflags "-s -w -H windowsgui -X main.version=<version>"`
+- Version derived from tag name (strip leading `v`) or dispatch input
+- Portable zip bundles README, CHANGELOG, FILES listing
 
 ## 🚀 How to Create a Release
 
