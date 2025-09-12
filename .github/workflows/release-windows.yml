@@ -1,0 +1,163 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 2.1.0). If empty, derived from tag or VERSION file.'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+    env:
+      GO_VERSION: '1.25.x'
+      APP_NAME: HadesCrypt
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install MSYS2 and Mingw-w64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+
+      - name: Derive Version
+        id: version
+        shell: pwsh
+        run: |
+          # Priority: dispatch input > tag > VERSION file > dev
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and '${{ github.event.inputs.version }}' -ne '') {
+            $V='${{ github.event.inputs.version }}'
+          } elseif ($env:GITHUB_REF -like 'refs/tags/*') {
+            $V=$env:GITHUB_REF_NAME -replace '^v',''
+          } elseif (Test-Path VERSION) {
+            $V=(Get-Content VERSION -Raw).Trim()
+          } else {
+            $V='dev'
+          }
+          Set-Content -Path VERSION -Value $V -Encoding utf8
+          "version=$V" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Using version: $V"
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\go\pkg\mod
+            ~\AppData\Local\go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        shell: pwsh
+        run: |
+          go env
+          go mod download
+
+      - name: Build Windows x64 GUI
+        shell: pwsh
+        env:
+          CGO_ENABLED: '1'
+          CC: C:\msys64\mingw64\bin\gcc.exe
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
+          $ld = "-s -w -H windowsgui -X main.version=${{ steps.version.outputs.version }}"
+          $out = "dist\\windows\\${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-x64.exe"
+          go build -ldflags $ld -o $out .
+          if (!(Test-Path $out)) { Write-Error 'Build failed'; exit 1 }
+
+      - name: Generate SHA256
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\windows -Filter *.exe | ForEach-Object {
+            $hash=(Get-FileHash -Algorithm SHA256 $_.FullName).Hash
+            "$($hash)  $($_.Name)" | Out-File (Join-Path $_.DirectoryName ("$($_.Name).sha256")) -Encoding ascii
+          }
+
+      - name: Prepare Portable Zip
+        shell: pwsh
+        run: |
+          $pkgDir = "dist\package"
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+          if (Test-Path README.md) { Copy-Item README.md $pkgDir }
+          if (Test-Path CHANGELOG.md) { Copy-Item CHANGELOG.md $pkgDir }
+          if (Test-Path VERSION) { Copy-Item VERSION $pkgDir }
+          Copy-Item dist\windows\*.exe $pkgDir
+          'FILES:' | Out-File "$pkgDir\FILES.txt" -Encoding ascii
+          (Get-ChildItem $pkgDir | Select-Object -ExpandProperty Name) | Out-File "$pkgDir\FILES.txt" -Append -Encoding ascii
+          $zip = "dist\\${{ env.APP_NAME }}-v${{ steps.version.outputs.version }}-Windows-portable.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$pkgDir\*" -DestinationPath $zip -Force
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ steps.version.outputs.version }}
+          path: |
+            dist/windows/*.exe
+            dist/windows/*.sha256
+            dist/*-Windows-portable.zip
+          retention-days: 30
+
+      - name: Create GitHub Release (tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: HadesCrypt v${{ steps.version.outputs.version }} (Windows)
+          draft: false
+          prerelease: false
+          files: |
+            dist/windows/*.exe
+            dist/windows/*.sha256
+            dist/*-Windows-portable.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-manual:
+    name: Create Release (manual)
+    if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-${{ needs.build-windows.outputs.version }}
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build-windows.outputs.version }}
+          name: HadesCrypt v${{ needs.build-windows.outputs.version }} (Windows)
+          draft: false
+          prerelease: false
+          files: |
+            dist/**/*.exe
+            dist/**/*.sha256
+            dist/*-Windows-portable.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

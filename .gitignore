@@ -46,4 +46,4 @@ test-*.bin
 # Release artifacts
 *.zip
 *.tar.gz
-release-*
+# release-*

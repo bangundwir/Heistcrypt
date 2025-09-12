@@ -26,21 +26,21 @@ Focused workflow to build and publish ONLY the Windows binary & portable zip.
 
 **Triggers:**
 - Push tag `v*` (e.g. `v2.0.4`) → automatic release
-- Manual `workflow_dispatch` (optional version input) → builds & creates release
+- Manual `workflow_dispatch` (optional `version` input) → builds & creates release
 
 **Jobs:**
 - `build-windows`: Builds Windows x64, generates SHA256, creates portable zip, uploads artifacts
-- `release-manual`: (dispatch without tag) creates a release using provided version
+- `release-manual`: If manual dispatch (no tag), creates/publishes release with `v<version>`
 
 **Artifacts Produced:**
 - `HadesCrypt-vX.Y.Z-Windows-x64.exe`
-- `HadesCrypt-vX.Y.Z-Windows-x64.exe.sha256` (or `.sha256.txt` fallback)
+- `HadesCrypt-vX.Y.Z-Windows-x64.exe.sha256`
 - `HadesCrypt-vX.Y.Z-Windows-portable.zip`
 
 **Notes:**
 - Uses `-ldflags "-s -w -H windowsgui -X main.version=<version>"`
-- Version derived from tag name (strip leading `v`) or dispatch input
-- Portable zip bundles README, CHANGELOG, FILES listing
+- Version priority: dispatch input > tag (strip `v`) > `VERSION` file > `dev`
+- Portable zip bundles README, CHANGELOG, VERSION, and FILES listing
 
 ## 🚀 How to Create a Release
 
@@ -76,7 +76,7 @@ git push origin "v2.0.1"
 ### Method 3: Manual Workflow Dispatch
 
 1. Go to GitHub Actions tab
-2. Select "Build and Release HadesCrypt"
+2. Select "Release Windows"
 3. Click "Run workflow"
 4. Enter version number (e.g., `2.0.1`)
 5. Click "Run workflow"
@@ -132,7 +132,7 @@ Check workflow status at:
 3. **Artifacts Missing**: Check upload-artifact step logs
 4. **Security Scan Fails**: Review Gosec output for issues
 5. **Unused Import Errors**: Fixed in splitter package - removed unused `strconv` and `strings` imports
-6. **GLFW/OpenGL Errors**: Workflow now only builds for Windows and Linux (no macOS) to avoid X11 dependencies
+6. **GLFW/OpenGL Errors**: This workflow targets Windows only, avoiding X11/macOS issues
 
 ### Manual Build Commands:
 
